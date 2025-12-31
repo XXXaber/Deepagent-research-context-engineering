@@ -1,4 +1,4 @@
-# DeepAgent Context Engineering
+# DeepAgents 기반 Research Multi Agent System
 
 Agent 2.0 Paradigm 을 잘 구현하는 DeepAgent 를 활용해서, FileSystem 기반 Context Engineering 을 원활히 수행하는 Research 용 Multi Agent 구성(From LangChain's deepagents library)
 
@@ -11,6 +11,48 @@ Agent 2.0 Paradigm 을 잘 구현하는 DeepAgent 를 활용해서, FileSystem �
 ## DeepAgent Technical Guide
 
 [DeepAgent Technical Guide](./DeepAgents_Technical_Guide.md)
+
+## 프로젝트 구조
+
+```bash
+deepagent-context-engineering/
+│
+├── research_agent/              # 메인 에이전트 모듈
+│   ├── researcher/              #    └─ 자율 연구 에이전트 (CompiledSubAgent)
+│   ├── skills/                  #    └─ 스킬 미들웨어 (Progressive Disclosure)
+│   └── subagents/               #    └─ SubAgent 정의 유틸리티
+│
+├── skills/                      # 프로젝트 레벨 스킬 정의
+│   ├── academic-search/         #    └─ arXiv 논문 검색
+│   ├── data-synthesis/          #    └─ 다중 소스 데이터 통합
+│   ├── report-writing/          #    └─ 구조화된 보고서 작성
+│   └── skill-creator/           #    └─ 스킬 생성 메타스킬
+│
+├── research_workspace/          # 연구 결과물 저장소 (가상 파일시스템의 ROOT)
+│   └── (에이전트가 생성한 보고서, TODO 등)
+│
+├── deep-agents-ui/              # DeepAgent 프론트엔드 UI (Next.js + React)
+│   └── src/                     #    └─ 소스 코드
+│
+├── deepagents_sourcecode/       # DeepAgents 라이브러리 소스 참조
+│   └── libs/                    #    └─ 라이브러리 코드
+│
+├── DeepAgent_research.ipynb     # Research DeepAgent 활용 노트북
+├── DeepAgents_Technical_Guide.md # DeepAgents 가이드 (한국어)
+├── langgraph.json               # LangGraph API 배포 설정
+└── pyproject.toml               # Python 프로젝트 설정 (uv package manager)
+```
+
+### 주요 디렉토리 설명
+
+| 디렉토리 | 설명 |
+|----------|------|
+| `research_agent/` | DeepAgent 기반 멀티 에이전트 시스템의 핵심 모듈 |
+| `skills/` | YAML 프론트매터 기반 스킬 정의 (SKILL.md 파일들) |
+| `research_workspace/` | 에이전트의 영구 파일시스템 저장소 |
+| `deep-agents-ui/` | LangChain 제공 DeepAgent 시각화 UI |
+
+---
 
 ## DeepAgent 기반의 Research 수행용 MAS(Multi Agent System)
 
