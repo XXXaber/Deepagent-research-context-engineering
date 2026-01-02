@@ -1,0 +1,871 @@
+//! Pregel Runtime - Core execution engine for workflow graphs
+//!
+//! The runtime executes workflows through synchronized supersteps.
+//! Each superstep follows the sequence: Deliver → Compute → Collect → Route.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::{Mutex, Semaphore};
+use tokio::time::timeout;
+
+use super::config::PregelConfig;
+use super::error::PregelError;
+use super::message::VertexMessage;
+use super::state::WorkflowState;
+use super::vertex::{BoxedVertex, ComputeContext, ComputeResult, VertexId, VertexState};
+
+/// Result of a workflow execution
+#[derive(Debug, Clone)]
+pub struct WorkflowResult<S: WorkflowState> {
+    /// Final workflow state
+    pub state: S,
+    /// Number of supersteps executed
+    pub supersteps: usize,
+    /// Whether the workflow completed successfully
+    pub completed: bool,
+    /// Final states of all vertices
+    pub vertex_states: HashMap<VertexId, VertexState>,
+}
+
+/// Pregel Runtime for executing workflow graphs
+///
+/// Manages the execution of vertices through synchronized supersteps,
+/// handling message passing, state updates, and termination detection.
+pub struct PregelRuntime<S, M>
+where
+    S: WorkflowState,
+    M: VertexMessage,
+{
+    /// Configuration for the runtime
+    config: PregelConfig,
+    /// Vertices in the workflow graph
+    vertices: HashMap<VertexId, BoxedVertex<S, M>>,
+    /// Current state of each vertex
+    vertex_states: HashMap<VertexId, VertexState>,
+    /// Pending messages for each vertex (delivered at start of next superstep)
+    message_queues: HashMap<VertexId, Vec<M>>,
+    /// Edges defining message routing (source -> targets)
+    edges: HashMap<VertexId, Vec<VertexId>>,
+    /// Retry attempt counts per vertex (for retry policy enforcement)
+    retry_counts: HashMap<VertexId, usize>,
+}
+
+impl<S, M> PregelRuntime<S, M>
+where
+    S: WorkflowState,
+    M: VertexMessage,
+{
+    /// Create a new runtime with default configuration
+    pub fn new() -> Self {
+        Self::with_config(PregelConfig::default())
+    }
+
+    /// Create a new runtime with custom configuration
+    pub fn with_config(config: PregelConfig) -> Self {
+        Self {
+            config,
+            vertices: HashMap::new(),
+            vertex_states: HashMap::new(),
+            message_queues: HashMap::new(),
+            edges: HashMap::new(),
+            retry_counts: HashMap::new(),
+        }
+    }
+
+    /// Add a vertex to the runtime
+    pub fn add_vertex(&mut self, vertex: BoxedVertex<S, M>) -> &mut Self {
+        let id = vertex.id().clone();
+        self.vertex_states.insert(id.clone(), VertexState::Active);
+        self.message_queues.insert(id.clone(), Vec::new());
+        self.vertices.insert(id, vertex);
+        self
+    }
+
+    /// Add an edge between vertices
+    pub fn add_edge(&mut self, from: impl Into<VertexId>, to: impl Into<VertexId>) -> &mut Self {
+        let from = from.into();
+        let to = to.into();
+        self.edges.entry(from).or_default().push(to);
+        self
+    }
+
+    /// Set the entry point (activate this vertex on start)
+    pub fn set_entry(&mut self, entry: impl Into<VertexId>) -> &mut Self {
+        let entry = entry.into();
+        if let Some(state) = self.vertex_states.get_mut(&entry) {
+            *state = VertexState::Active;
+        }
+        self
+    }
+
+    /// Get the configuration
+    pub fn config(&self) -> &PregelConfig {
+        &self.config
+    }
+
+    /// Run the workflow to completion
+    ///
+    /// Enforces the configured `workflow_timeout` - if the workflow takes longer
+    /// than this duration, it will return a `WorkflowTimeout` error.
+    pub async fn run(&mut self, initial_state: S) -> Result<WorkflowResult<S>, PregelError> {
+        let workflow_timeout = self.config.workflow_timeout;
+
+        // C2 Fix: Wrap entire run loop with workflow timeout
+        match timeout(workflow_timeout, self.run_inner(initial_state)).await {
+            Ok(result) => result,
+            Err(_) => Err(PregelError::WorkflowTimeout(workflow_timeout)),
+        }
+    }
+
+    /// Internal run loop (extracted for timeout wrapping)
+    async fn run_inner(&mut self, initial_state: S) -> Result<WorkflowResult<S>, PregelError> {
+        let mut state = initial_state;
+        let mut superstep = 0;
+
+        loop {
+            // Check max supersteps limit
+            if superstep >= self.config.max_supersteps {
+                return Err(PregelError::MaxSuperstepsExceeded(superstep));
+            }
+
+            // Check if workflow should terminate
+            if self.should_terminate(&state) {
+                return Ok(WorkflowResult {
+                    state,
+                    supersteps: superstep,
+                    completed: true,
+                    vertex_states: self.vertex_states.clone(),
+                });
+            }
+
+            // Execute one superstep
+            let updates = self.execute_superstep(superstep, &state).await?;
+
+            // Apply state updates
+            state = state.apply_updates(updates);
+
+            superstep += 1;
+        }
+    }
+
+    /// Check if the workflow should terminate
+    fn should_terminate(&self, state: &S) -> bool {
+        // Terminal state check
+        if state.is_terminal() {
+            return true;
+        }
+
+        // All vertices halted or completed AND no pending messages
+        let all_inactive = self
+            .vertex_states
+            .values()
+            .all(|s| !s.is_active());
+
+        let no_pending_messages = self
+            .message_queues
+            .values()
+            .all(|q| q.is_empty());
+
+        all_inactive && no_pending_messages
+    }
+
+    /// Execute a single superstep
+    async fn execute_superstep(
+        &mut self,
+        superstep: usize,
+        state: &S,
+    ) -> Result<Vec<S::Update>, PregelError> {
+        // 1. Deliver messages - move pending messages to vertex inboxes
+        let inboxes = self.deliver_messages();
+
+        // 2. Reactivate halted vertices that received messages
+        for (vertex_id, messages) in &inboxes {
+            if !messages.is_empty() {
+                if let Some(vertex_state) = self.vertex_states.get_mut(vertex_id) {
+                    if vertex_state.is_halted() {
+                        if let Some(vertex) = self.vertices.get(vertex_id) {
+                            *vertex_state = vertex.on_reactivation(messages);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Compute active vertices in parallel
+        let (updates, outboxes) = self.compute_vertices(superstep, state, &inboxes).await?;
+
+        // 4. Route messages to next superstep queues
+        self.route_messages(outboxes);
+
+        Ok(updates)
+    }
+
+    /// Deliver pending messages to vertex inboxes
+    fn deliver_messages(&mut self) -> HashMap<VertexId, Vec<M>> {
+        let mut inboxes = HashMap::new();
+        for (vertex_id, queue) in &mut self.message_queues {
+            if !queue.is_empty() {
+                inboxes.insert(vertex_id.clone(), std::mem::take(queue));
+            } else {
+                inboxes.insert(vertex_id.clone(), Vec::new());
+            }
+        }
+        inboxes
+    }
+
+    /// Compute all active vertices in parallel
+    async fn compute_vertices(
+        &mut self,
+        superstep: usize,
+        state: &S,
+        inboxes: &HashMap<VertexId, Vec<M>>,
+    ) -> Result<(Vec<S::Update>, HashMap<VertexId, HashMap<VertexId, Vec<M>>>), PregelError> {
+        let semaphore = Arc::new(Semaphore::new(self.config.parallelism));
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let outboxes = Arc::new(Mutex::new(HashMap::new()));
+        let vertex_timeout = self.config.vertex_timeout;
+
+        // Collect active vertices to compute
+        let active_vertices: Vec<_> = self
+            .vertex_states
+            .iter()
+            .filter(|(_, state)| state.is_active())
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        // Execute vertices in parallel
+        let mut handles = Vec::new();
+
+        for vertex_id in active_vertices {
+            let vertex = match self.vertices.get(&vertex_id) {
+                Some(v) => Arc::clone(v),
+                None => continue,
+            };
+            let messages = inboxes.get(&vertex_id).cloned().unwrap_or_default();
+            let state_clone = state.clone();
+            let sem_clone = Arc::clone(&semaphore);
+            let vid = vertex_id.clone();
+
+            let handle = tokio::spawn(async move {
+                // Acquire semaphore permit for parallelism control
+                let _permit = sem_clone.acquire().await.unwrap();
+
+                // Create compute context
+                let mut ctx = ComputeContext::new(vid.clone(), &messages, superstep, &state_clone);
+
+                // Execute with timeout
+                let result: Result<ComputeResult<S::Update>, PregelError> = match timeout(
+                    vertex_timeout,
+                    vertex.compute(&mut ctx),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(PregelError::VertexTimeout(vid.clone())),
+                };
+
+                let outbox = ctx.into_outbox();
+
+                (vid, result, outbox)
+            });
+
+            handles.push(handle);
+        }
+
+        // Collect results
+        let mut new_vertex_states = HashMap::new();
+
+        for handle in handles {
+            let (vid, result, outbox) = handle.await.map_err(|e| {
+                PregelError::vertex_error_with_source(
+                    "unknown",
+                    "task join error",
+                    std::io::Error::other(e.to_string()),
+                )
+            })?;
+
+            match result {
+                Ok(compute_result) => {
+                    // Success: reset retry count for this vertex
+                    self.retry_counts.remove(&vid);
+                    updates.lock().await.push(compute_result.update);
+                    new_vertex_states.insert(vid.clone(), compute_result.state);
+                    outboxes.lock().await.insert(vid, outbox);
+                }
+                Err(e) => {
+                    if e.is_recoverable() {
+                        // C3 Fix: Track retry attempts and enforce max_retries
+                        // retry_count tracks how many retries we've already attempted
+                        let retry_count = self.retry_counts.entry(vid.clone()).or_insert(0);
+
+                        // Check if we can retry BEFORE incrementing
+                        if self.config.retry_policy.should_retry(*retry_count) {
+                            // Apply backoff delay before next retry
+                            let delay = self.config.retry_policy.delay_for_attempt(*retry_count);
+                            tokio::time::sleep(delay).await;
+                            // Track this retry attempt
+                            *retry_count += 1;
+                            // Keep vertex active for retry
+                            new_vertex_states.insert(vid, VertexState::Active);
+                        } else {
+                            // Max retries exceeded (current attempt is retry_count + 1 total)
+                            return Err(PregelError::MaxRetriesExceeded {
+                                vertex_id: vid,
+                                attempts: *retry_count + 1, // +1 for the current failed attempt
+                            });
+                        }
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        // Update vertex states
+        for (vid, new_state) in new_vertex_states {
+            self.vertex_states.insert(vid, new_state);
+        }
+
+        // C1 Fix: Use async-safe lock instead of blocking_lock
+        let final_updates = match Arc::try_unwrap(updates) {
+            Ok(mutex) => mutex.into_inner(),
+            Err(arc) => arc.lock().await.clone(),
+        };
+
+        let final_outboxes = match Arc::try_unwrap(outboxes) {
+            Ok(mutex) => mutex.into_inner(),
+            Err(arc) => arc.lock().await.clone(),
+        };
+
+        Ok((final_updates, final_outboxes))
+    }
+
+    /// Route outgoing messages to target vertex queues
+    fn route_messages(&mut self, outboxes: HashMap<VertexId, HashMap<VertexId, Vec<M>>>) {
+        for (_source, outbox) in outboxes {
+            for (target, messages) in outbox {
+                if let Some(queue) = self.message_queues.get_mut(&target) {
+                    queue.extend(messages);
+                }
+            }
+        }
+    }
+}
+
+impl<S, M> Default for PregelRuntime<S, M>
+where
+    S: WorkflowState,
+    M: VertexMessage,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::message::WorkflowMessage;
+    use super::super::vertex::{StateUpdate, Vertex};
+    use async_trait::async_trait;
+    use tokio::time::Duration;
+
+    #[allow(unused_imports)]
+    use super::super::state::WorkflowState as _;
+
+    // Test state
+    #[derive(Clone, Default, Debug)]
+    struct TestState {
+        counter: i32,
+        messages_received: i32,
+    }
+
+    #[derive(Clone, Debug)]
+    struct TestUpdate {
+        counter_delta: i32,
+        messages_delta: i32,
+    }
+
+    impl StateUpdate for TestUpdate {
+        fn empty() -> Self {
+            TestUpdate {
+                counter_delta: 0,
+                messages_delta: 0,
+            }
+        }
+
+        fn is_empty(&self) -> bool {
+            self.counter_delta == 0 && self.messages_delta == 0
+        }
+    }
+
+    impl WorkflowState for TestState {
+        type Update = TestUpdate;
+
+        fn apply_update(&self, update: Self::Update) -> Self {
+            TestState {
+                counter: self.counter + update.counter_delta,
+                messages_received: self.messages_received + update.messages_delta,
+            }
+        }
+
+        fn merge_updates(updates: Vec<Self::Update>) -> Self::Update {
+            TestUpdate {
+                counter_delta: updates.iter().map(|u| u.counter_delta).sum(),
+                messages_delta: updates.iter().map(|u| u.messages_delta).sum(),
+            }
+        }
+
+        fn is_terminal(&self) -> bool {
+            self.counter >= 10
+        }
+    }
+
+    // Simple vertex that increments counter and halts
+    struct IncrementVertex {
+        id: VertexId,
+        #[allow(dead_code)]
+        increment: i32,
+    }
+
+    #[async_trait]
+    impl Vertex<TestState, WorkflowMessage> for IncrementVertex {
+        fn id(&self) -> &VertexId {
+            &self.id
+        }
+
+        async fn compute(
+            &self,
+            _ctx: &mut ComputeContext<'_, TestState, WorkflowMessage>,
+        ) -> Result<ComputeResult<TestUpdate>, PregelError> {
+            // Just halt immediately
+            Ok(ComputeResult::halt(TestUpdate::empty()))
+        }
+    }
+
+    // Vertex that sends a message then halts
+    struct MessageSenderVertex {
+        id: VertexId,
+        target: VertexId,
+    }
+
+    #[async_trait]
+    impl Vertex<TestState, WorkflowMessage> for MessageSenderVertex {
+        fn id(&self) -> &VertexId {
+            &self.id
+        }
+
+        async fn compute(
+            &self,
+            ctx: &mut ComputeContext<'_, TestState, WorkflowMessage>,
+        ) -> Result<ComputeResult<TestUpdate>, PregelError> {
+            if ctx.is_first_superstep() {
+                ctx.send_message(self.target.clone(), WorkflowMessage::Activate);
+            }
+            Ok(ComputeResult::halt(TestUpdate::empty()))
+        }
+    }
+
+    // Vertex that counts messages received
+    struct MessageReceiverVertex {
+        id: VertexId,
+    }
+
+    #[async_trait]
+    impl Vertex<TestState, WorkflowMessage> for MessageReceiverVertex {
+        fn id(&self) -> &VertexId {
+            &self.id
+        }
+
+        async fn compute(
+            &self,
+            _ctx: &mut ComputeContext<'_, TestState, WorkflowMessage>,
+        ) -> Result<ComputeResult<TestUpdate>, PregelError> {
+            // Just halt after receiving messages
+            Ok(ComputeResult::halt(TestUpdate::empty()))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_runtime_creation() {
+        let runtime: PregelRuntime<TestState, WorkflowMessage> = PregelRuntime::new();
+        assert_eq!(runtime.config().max_supersteps, 100);
+    }
+
+    #[tokio::test]
+    async fn test_runtime_single_vertex_halts() {
+        let mut runtime: PregelRuntime<TestState, WorkflowMessage> = PregelRuntime::new();
+
+        runtime.add_vertex(Arc::new(IncrementVertex {
+            id: VertexId::new("a"),
+            increment: 1,
+        }));
+
+        let result = runtime.run(TestState::default()).await;
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert!(result.completed);
+        // Single vertex computes once then halts, workflow terminates
+        assert!(result.supersteps <= 2);
+    }
+
+    #[tokio::test]
+    async fn test_runtime_message_delivery() {
+        let mut runtime: PregelRuntime<TestState, WorkflowMessage> = PregelRuntime::new();
+
+        runtime.add_vertex(Arc::new(MessageSenderVertex {
+            id: VertexId::new("sender"),
+            target: VertexId::new("receiver"),
+        }));
+
+        runtime.add_vertex(Arc::new(MessageReceiverVertex {
+            id: VertexId::new("receiver"),
+        }));
+
+        let result = runtime.run(TestState::default()).await.unwrap();
+        assert!(result.completed);
+        // Sender sends in superstep 0, receiver gets it in superstep 1
+        assert!(result.supersteps >= 1);
+    }
+
+    #[tokio::test]
+    async fn test_runtime_termination_all_halted() {
+        let mut runtime: PregelRuntime<TestState, WorkflowMessage> = PregelRuntime::new();
+
+        // Add two vertices that halt immediately
+        runtime.add_vertex(Arc::new(IncrementVertex {
+            id: VertexId::new("a"),
+            increment: 1,
+        }));
+
+        runtime.add_vertex(Arc::new(IncrementVertex {
+            id: VertexId::new("b"),
+            increment: 1,
+        }));
+
+        let result = runtime.run(TestState::default()).await.unwrap();
+        assert!(result.completed);
+        // All vertices halt, no messages pending -> terminate
+        assert!(result.vertex_states.values().all(|s| !s.is_active()));
+    }
+
+    #[tokio::test]
+    async fn test_runtime_max_supersteps_exceeded() {
+        struct InfiniteLoopVertex {
+            id: VertexId,
+        }
+
+        #[async_trait]
+        impl Vertex<TestState, WorkflowMessage> for InfiniteLoopVertex {
+            fn id(&self) -> &VertexId {
+                &self.id
+            }
+
+            async fn compute(
+                &self,
+                ctx: &mut ComputeContext<'_, TestState, WorkflowMessage>,
+            ) -> Result<ComputeResult<TestUpdate>, PregelError> {
+                // Always stay active
+                ctx.send_message(self.id.clone(), WorkflowMessage::Activate);
+                Ok(ComputeResult::active(TestUpdate::empty()))
+            }
+        }
+
+        let config = PregelConfig::default().with_max_supersteps(5);
+        let mut runtime: PregelRuntime<TestState, WorkflowMessage> =
+            PregelRuntime::with_config(config);
+
+        runtime.add_vertex(Arc::new(InfiniteLoopVertex {
+            id: VertexId::new("loop"),
+        }));
+
+        let result = runtime.run(TestState::default()).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            PregelError::MaxSuperstepsExceeded(5)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_runtime_terminal_state() {
+        struct CounterVertex {
+            id: VertexId,
+        }
+
+        #[async_trait]
+        impl Vertex<TestState, WorkflowMessage> for CounterVertex {
+            fn id(&self) -> &VertexId {
+                &self.id
+            }
+
+            async fn compute(
+                &self,
+                ctx: &mut ComputeContext<'_, TestState, WorkflowMessage>,
+            ) -> Result<ComputeResult<TestUpdate>, PregelError> {
+                // Keep running until terminal state
+                ctx.send_message(self.id.clone(), WorkflowMessage::Activate);
+                Ok(ComputeResult::active(TestUpdate::empty()))
+            }
+        }
+
+        let mut runtime: PregelRuntime<TestState, WorkflowMessage> = PregelRuntime::new();
+
+        runtime.add_vertex(Arc::new(CounterVertex {
+            id: VertexId::new("counter"),
+        }));
+
+        // Start with counter at 10, which is terminal
+        let result = runtime
+            .run(TestState {
+                counter: 10,
+                messages_received: 0,
+            })
+            .await
+            .unwrap();
+
+        assert!(result.completed);
+        assert_eq!(result.supersteps, 0); // Terminates immediately
+    }
+
+    #[tokio::test]
+    async fn test_runtime_parallel_execution() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Instant;
+
+        static EXECUTION_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+        struct SlowVertex {
+            id: VertexId,
+        }
+
+        #[async_trait]
+        impl Vertex<TestState, WorkflowMessage> for SlowVertex {
+            fn id(&self) -> &VertexId {
+                &self.id
+            }
+
+            async fn compute(
+                &self,
+                _ctx: &mut ComputeContext<'_, TestState, WorkflowMessage>,
+            ) -> Result<ComputeResult<TestUpdate>, PregelError> {
+                EXECUTION_COUNT.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                Ok(ComputeResult::halt(TestUpdate::empty()))
+            }
+        }
+
+        EXECUTION_COUNT.store(0, Ordering::SeqCst);
+
+        let config = PregelConfig::default().with_parallelism(4);
+        let mut runtime: PregelRuntime<TestState, WorkflowMessage> =
+            PregelRuntime::with_config(config);
+
+        // Add 4 slow vertices
+        for i in 0..4 {
+            runtime.add_vertex(Arc::new(SlowVertex {
+                id: VertexId::new(format!("slow_{}", i)),
+            }));
+        }
+
+        let start = Instant::now();
+        let result = runtime.run(TestState::default()).await.unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(result.completed);
+        assert_eq!(EXECUTION_COUNT.load(Ordering::SeqCst), 4);
+        // With parallelism=4, should take ~50ms, not ~200ms
+        assert!(elapsed < Duration::from_millis(150));
+    }
+
+    #[tokio::test]
+    async fn test_runtime_add_edge() {
+        let mut runtime: PregelRuntime<TestState, WorkflowMessage> = PregelRuntime::new();
+
+        runtime
+            .add_vertex(Arc::new(IncrementVertex {
+                id: VertexId::new("a"),
+                increment: 1,
+            }))
+            .add_edge("a", "b");
+
+        assert!(runtime.edges.contains_key(&VertexId::new("a")));
+    }
+
+    // ============================================
+    // C2: Workflow Timeout Tests (RED - should fail)
+    // ============================================
+
+    #[tokio::test]
+    async fn test_workflow_timeout_enforced() {
+        // Vertex that runs forever (simulates slow LLM calls)
+        struct SlowForeverVertex {
+            id: VertexId,
+        }
+
+        #[async_trait]
+        impl Vertex<TestState, WorkflowMessage> for SlowForeverVertex {
+            fn id(&self) -> &VertexId {
+                &self.id
+            }
+
+            async fn compute(
+                &self,
+                ctx: &mut ComputeContext<'_, TestState, WorkflowMessage>,
+            ) -> Result<ComputeResult<TestUpdate>, PregelError> {
+                // Sleep for a long time but stay active
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                ctx.send_message(self.id.clone(), WorkflowMessage::Activate);
+                Ok(ComputeResult::active(TestUpdate::empty()))
+            }
+        }
+
+        // Set a very short workflow timeout (100ms)
+        let config = PregelConfig::default()
+            .with_workflow_timeout(Duration::from_millis(100))
+            .with_vertex_timeout(Duration::from_secs(60)) // vertex timeout is longer
+            .with_max_supersteps(1000); // high limit so it doesn't hit this first
+
+        let mut runtime: PregelRuntime<TestState, WorkflowMessage> =
+            PregelRuntime::with_config(config);
+
+        runtime.add_vertex(Arc::new(SlowForeverVertex {
+            id: VertexId::new("slow"),
+        }));
+
+        let start = std::time::Instant::now();
+        let result = runtime.run(TestState::default()).await;
+        let elapsed = start.elapsed();
+
+        // Should timeout within ~200ms (some tolerance)
+        assert!(elapsed < Duration::from_millis(500), "Took too long: {:?}", elapsed);
+
+        // Should return WorkflowTimeout error
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, PregelError::WorkflowTimeout(_)),
+            "Expected WorkflowTimeout, got {:?}",
+            err
+        );
+    }
+
+    // ============================================
+    // C3: Retry Policy Tests (RED - should fail)
+    // ============================================
+
+    #[tokio::test]
+    async fn test_retry_policy_with_backoff() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static ATTEMPT_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+        // Vertex that fails first 2 times, then succeeds
+        struct FailingThenSuccessVertex {
+            id: VertexId,
+        }
+
+        #[async_trait]
+        impl Vertex<TestState, WorkflowMessage> for FailingThenSuccessVertex {
+            fn id(&self) -> &VertexId {
+                &self.id
+            }
+
+            async fn compute(
+                &self,
+                _ctx: &mut ComputeContext<'_, TestState, WorkflowMessage>,
+            ) -> Result<ComputeResult<TestUpdate>, PregelError> {
+                let attempt = ATTEMPT_COUNT.fetch_add(1, Ordering::SeqCst);
+                if attempt < 2 {
+                    // Fail with recoverable error
+                    Err(PregelError::vertex_error(self.id.clone(), format!("transient failure {}", attempt)))
+                } else {
+                    // Succeed on 3rd attempt
+                    Ok(ComputeResult::halt(TestUpdate {
+                        counter_delta: 1,
+                        messages_delta: 0,
+                    }))
+                }
+            }
+        }
+
+        ATTEMPT_COUNT.store(0, Ordering::SeqCst);
+
+        let config = PregelConfig::default()
+            .with_retry_policy(
+                super::super::config::RetryPolicy::new(3)
+                    .with_backoff_base(Duration::from_millis(10))
+            )
+            .with_max_supersteps(20);
+
+        let mut runtime: PregelRuntime<TestState, WorkflowMessage> =
+            PregelRuntime::with_config(config);
+
+        runtime.add_vertex(Arc::new(FailingThenSuccessVertex {
+            id: VertexId::new("flaky"),
+        }));
+
+        let result = runtime.run(TestState::default()).await;
+
+        // Should succeed after retries
+        assert!(result.is_ok(), "Expected success after retries, got {:?}", result);
+
+        // Should have attempted 3 times (2 failures + 1 success)
+        assert_eq!(ATTEMPT_COUNT.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn test_retry_policy_max_exceeded() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static FAIL_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+        // Vertex that always fails
+        struct AlwaysFailsVertex {
+            id: VertexId,
+        }
+
+        #[async_trait]
+        impl Vertex<TestState, WorkflowMessage> for AlwaysFailsVertex {
+            fn id(&self) -> &VertexId {
+                &self.id
+            }
+
+            async fn compute(
+                &self,
+                _ctx: &mut ComputeContext<'_, TestState, WorkflowMessage>,
+            ) -> Result<ComputeResult<TestUpdate>, PregelError> {
+                FAIL_COUNT.fetch_add(1, Ordering::SeqCst);
+                Err(PregelError::vertex_error(self.id.clone(), "always fails"))
+            }
+        }
+
+        FAIL_COUNT.store(0, Ordering::SeqCst);
+
+        let config = PregelConfig::default()
+            .with_retry_policy(super::super::config::RetryPolicy::new(3))
+            .with_max_supersteps(100);
+
+        let mut runtime: PregelRuntime<TestState, WorkflowMessage> =
+            PregelRuntime::with_config(config);
+
+        runtime.add_vertex(Arc::new(AlwaysFailsVertex {
+            id: VertexId::new("failing"),
+        }));
+
+        let result = runtime.run(TestState::default()).await;
+
+        // Should fail with MaxRetriesExceeded
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, PregelError::MaxRetriesExceeded { .. }),
+            "Expected MaxRetriesExceeded, got {:?}",
+            err
+        );
+
+        // Should have tried exactly max_retries + 1 times (initial + retries)
+        assert_eq!(FAIL_COUNT.load(Ordering::SeqCst), 4); // 1 initial + 3 retries
+    }
+}

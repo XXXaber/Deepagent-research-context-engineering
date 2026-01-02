@@ -32,6 +32,8 @@ pub mod runtime;
 pub mod executor;
 pub mod tools;
 pub mod llm;
+pub mod pregel;
+pub mod workflow;
 
 // Re-exports for convenience
 pub use error::{BackendError, MiddlewareError, DeepAgentError, WriteResult, EditResult};

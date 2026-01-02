@@ -18,10 +18,6 @@ wheels/
 *_api/
 
 # AI
-AGENTS.md
-CLAUDE.md
-GEMINI.md
-QWEN.md
 .serena/
 
 # Others

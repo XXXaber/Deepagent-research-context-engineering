@@ -5,6 +5,12 @@ edition = "2021"
 description = "DeepAgents-style middleware system for Rig framework"
 license = "MIT"
 
+[features]
+default = []
+checkpointer-sqlite = []
+checkpointer-redis = []
+checkpointer-postgres = []
+
 [dependencies]
 rig-core = { version = "0.27", features = ["derive"] }
 tokio = { version = "1", features = ["full", "sync"] }
@@ -20,12 +26,18 @@ uuid = { version = "1", features = ["v4"] }
 walkdir = "2"  # Added: needed for FilesystemBackend recursive traversal
 futures = "0.3"  # Added: needed for LLMProvider streaming support
 
+# Pregel runtime dependencies
+num_cpus = "1"  # For default parallelism configuration
+humantime-serde = "1"  # For Duration serialization in configs
+zstd = "0.13"  # For checkpoint compression
+
 [dev-dependencies]
 # OpenAI support is built into rig-core
 tokio-test = "0.4"
 dotenv = "0.15"
 criterion = { version = "0.5", features = ["async_tokio"] }
 tempfile = "3"  # For filesystem tests
+static_assertions = "1"  # For compile-time trait checks
 
 [[bench]]
 name = "middleware_benchmark"
