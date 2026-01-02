@@ -13,6 +13,9 @@ use crate::pregel::state::WorkflowState;
 use crate::pregel::vertex::{ComputeContext, ComputeResult, StateUpdate, Vertex, VertexId, VertexState};
 use crate::workflow::node::{FanInNodeConfig, FanOutNodeConfig, MergeStrategy, SplitStrategy};
 
+/// Type alias for FanIn's message buffer (source_id, message)
+type ReceivedMessages = Arc<Mutex<Vec<(Option<String>, WorkflowMessage)>>>;
+
 /// FanOut Vertex: Dispatches messages to multiple targets
 pub struct FanOutVertex<S: WorkflowState> {
     id: VertexId,
@@ -75,13 +78,9 @@ impl<S: WorkflowState> Vertex<S, WorkflowMessage> for FanOutVertex<S> {
                             let root = value;
                             // If split_path is provided, try to navigate to it
                             if let Some(path) = &self.config.split_path {
-                                if let Some(sub) = root.pointer(path) {
-                                    Some(sub.clone())
-                                } else if let Some(sub) = root.get(path) {
-                                    Some(sub.clone())
-                                } else {
-                                    None
-                                }
+                                root.pointer(path)
+                                    .or_else(|| root.get(path))
+                                    .cloned()
                             } else {
                                 Some(root.clone())
                             }
@@ -120,10 +119,10 @@ impl<S: WorkflowState> Vertex<S, WorkflowMessage> for FanOutVertex<S> {
 pub struct FanInVertex<S: WorkflowState> {
     id: VertexId,
     config: FanInNodeConfig,
-    /// Store received messages. 
+    /// Store received messages.
     /// Since we can't easily identify sender of Data messages, we track count and payload.
     /// Vector stores (source_id_opt, message)
-    received: Arc<Mutex<Vec<(Option<String>, WorkflowMessage)>>>,
+    received: ReceivedMessages,
     _phantom: std::marker::PhantomData<S>,
 }
 
