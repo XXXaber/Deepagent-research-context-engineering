@@ -46,6 +46,7 @@
 //! ```
 
 pub mod node;
+pub mod graph;
 pub mod vertices;
 
 pub use node::{
@@ -53,5 +54,6 @@ pub use node::{
     NodeKind, RouterNodeConfig, RoutingStrategy, SplitStrategy, StopCondition, SubAgentNodeConfig,
     ToolNodeConfig,
 };
+pub use graph::{BuiltWorkflowGraph, GraphEdge, GraphNode, WorkflowBuildError, WorkflowGraph, END};
 
 pub use vertices::agent::AgentVertex;

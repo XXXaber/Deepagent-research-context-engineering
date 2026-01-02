@@ -6,11 +6,13 @@
 //!
 //! - [`agent::AgentVertex`]: LLM-based agent with tool calling
 //! - [`subagent::SubAgentVertex`]: Delegates to sub-agents from registry
+//! - [`tool::ToolVertex`]: Single tool execution with static/dynamic args
 
 pub mod agent;
+pub mod parallel;
 pub mod subagent;
-
-// Future vertex implementations:
 // pub mod tool;
 // pub mod router;
+
+// Future vertex implementations:
 // pub mod parallel;
