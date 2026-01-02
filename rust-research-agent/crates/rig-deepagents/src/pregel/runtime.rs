@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::time::timeout;
 
-use super::config::PregelConfig;
+use super::config::{ExecutionMode, PregelConfig};
 use super::error::PregelError;
 use super::message::VertexMessage;
 use super::state::WorkflowState;
@@ -48,6 +48,8 @@ where
     edges: HashMap<VertexId, Vec<VertexId>>,
     /// Retry attempt counts per vertex (for retry policy enforcement)
     retry_counts: HashMap<VertexId, usize>,
+    /// Entry vertex ID (for EdgeDriven mode reference)
+    entry_vertex: Option<VertexId>,
 }
 
 impl<S, M> PregelRuntime<S, M>
@@ -69,13 +71,19 @@ where
             message_queues: HashMap::new(),
             edges: HashMap::new(),
             retry_counts: HashMap::new(),
+            entry_vertex: None,
         }
     }
 
     /// Add a vertex to the runtime
     pub fn add_vertex(&mut self, vertex: BoxedVertex<S, M>) -> &mut Self {
         let id = vertex.id().clone();
-        self.vertex_states.insert(id.clone(), VertexState::Active);
+        // C1 Fix: Initial state depends on execution mode
+        let initial_state = match self.config.execution_mode {
+            ExecutionMode::MessageBased => VertexState::Active,
+            ExecutionMode::EdgeDriven => VertexState::Halted,
+        };
+        self.vertex_states.insert(id.clone(), initial_state);
         self.message_queues.insert(id.clone(), Vec::new());
         self.vertices.insert(id, vertex);
         self
@@ -91,10 +99,21 @@ where
 
     /// Set the entry point (activate this vertex on start)
     pub fn set_entry(&mut self, entry: impl Into<VertexId>) -> &mut Self {
-        let entry = entry.into();
-        if let Some(state) = self.vertex_states.get_mut(&entry) {
+        let entry_id = entry.into();
+        // C1 Fix: In EdgeDriven mode, ensure only entry is Active
+        if self.config.execution_mode == ExecutionMode::EdgeDriven {
+            // First, set all vertices to Halted
+            for state in self.vertex_states.values_mut() {
+                if state.is_active() {
+                    *state = VertexState::Halted;
+                }
+            }
+        }
+        // Activate the entry vertex
+        if let Some(state) = self.vertex_states.get_mut(&entry_id) {
             *state = VertexState::Active;
         }
+        self.entry_vertex = Some(entry_id);
         self
     }
 
@@ -192,10 +211,13 @@ where
         }
 
         // 3. Compute active vertices in parallel
-        let (updates, outboxes) = self.compute_vertices(superstep, state, &inboxes).await?;
+        let (updates, outboxes, newly_halted) = self.compute_vertices(superstep, state, &inboxes).await?;
 
-        // 4. Route messages to next superstep queues
+        // 4. Route explicit messages from vertex outboxes
         self.route_messages(outboxes);
+
+        // 5. C2 Fix: Route automatic edge messages for newly halted vertices
+        self.route_edge_messages(&newly_halted);
 
         Ok(updates)
     }
@@ -214,12 +236,13 @@ where
     }
 
     /// Compute all active vertices in parallel
+    /// Returns (updates, outboxes, newly_halted_vertex_ids)
     async fn compute_vertices(
         &mut self,
         superstep: usize,
         state: &S,
         inboxes: &HashMap<VertexId, Vec<M>>,
-    ) -> Result<(Vec<S::Update>, HashMap<VertexId, HashMap<VertexId, Vec<M>>>), PregelError> {
+    ) -> Result<(Vec<S::Update>, HashMap<VertexId, HashMap<VertexId, Vec<M>>>, Vec<VertexId>), PregelError> {
         let semaphore = Arc::new(Semaphore::new(self.config.parallelism));
         let updates = Arc::new(Mutex::new(Vec::new()));
         let outboxes = Arc::new(Mutex::new(HashMap::new()));
@@ -274,6 +297,7 @@ where
 
         // Collect results
         let mut new_vertex_states = HashMap::new();
+        let mut newly_halted = Vec::new();
 
         for handle in handles {
             let (vid, result, outbox) = handle.await.map_err(|e| {
@@ -289,6 +313,10 @@ where
                     // Success: reset retry count for this vertex
                     self.retry_counts.remove(&vid);
                     updates.lock().await.push(compute_result.update);
+                    // C2 Fix: Track newly halted vertices for edge routing
+                    if compute_result.state.is_halted() {
+                        newly_halted.push(vid.clone());
+                    }
                     new_vertex_states.insert(vid.clone(), compute_result.state);
                     outboxes.lock().await.insert(vid, outbox);
                 }
@@ -337,7 +365,7 @@ where
             Err(arc) => arc.lock().await.clone(),
         };
 
-        Ok((final_updates, final_outboxes))
+        Ok((final_updates, final_outboxes, newly_halted))
     }
 
     /// Route outgoing messages to target vertex queues
@@ -346,6 +374,25 @@ where
             for (target, messages) in outbox {
                 if let Some(queue) = self.message_queues.get_mut(&target) {
                     queue.extend(messages);
+                }
+            }
+        }
+    }
+
+    /// Route automatic activation messages when vertices halt (EdgeDriven mode only)
+    fn route_edge_messages(&mut self, newly_halted: &[VertexId]) {
+        if self.config.execution_mode != ExecutionMode::EdgeDriven {
+            return;
+        }
+
+        for source_id in newly_halted {
+            // Get edge targets for this source
+            if let Some(targets) = self.edges.get(source_id) {
+                for target_id in targets {
+                    // Send Activate message to each edge target
+                    if let Some(queue) = self.message_queues.get_mut(target_id) {
+                        queue.push(M::activation_message());
+                    }
                 }
             }
         }
@@ -867,5 +914,171 @@ mod tests {
 
         // Should have tried exactly max_retries + 1 times (initial + retries)
         assert_eq!(FAIL_COUNT.load(Ordering::SeqCst), 4); // 1 initial + 3 retries
+    }
+
+    #[tokio::test]
+    async fn test_edge_driven_only_entry_active() {
+        use super::super::config::ExecutionMode;
+
+        let config = PregelConfig::default()
+            .with_execution_mode(ExecutionMode::EdgeDriven);
+        let mut runtime: PregelRuntime<TestState, WorkflowMessage> =
+            PregelRuntime::with_config(config);
+
+        runtime
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("a"), increment: 1 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("b"), increment: 1 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("c"), increment: 1 }))
+            .set_entry("a");
+
+        // Only "a" should be Active
+        assert!(runtime.vertex_states.get(&VertexId::new("a")).unwrap().is_active(),
+            "Entry vertex 'a' should be Active");
+        assert!(runtime.vertex_states.get(&VertexId::new("b")).unwrap().is_halted(),
+            "Non-entry vertex 'b' should be Halted");
+        assert!(runtime.vertex_states.get(&VertexId::new("c")).unwrap().is_halted(),
+            "Non-entry vertex 'c' should be Halted");
+    }
+
+    #[tokio::test]
+    async fn test_message_based_all_active_backward_compat() {
+        use super::super::config::ExecutionMode;
+
+        let config = PregelConfig::default()
+            .with_execution_mode(ExecutionMode::MessageBased);
+        let mut runtime: PregelRuntime<TestState, WorkflowMessage> =
+            PregelRuntime::with_config(config);
+
+        runtime
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("a"), increment: 1 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("b"), increment: 1 }));
+
+        // Both should be Active (backward compatible)
+        assert!(runtime.vertex_states.get(&VertexId::new("a")).unwrap().is_active());
+        assert!(runtime.vertex_states.get(&VertexId::new("b")).unwrap().is_active());
+    }
+
+    #[tokio::test]
+    async fn test_edge_driven_auto_activation() {
+        use super::super::config::ExecutionMode;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        // Vertex that halts immediately without sending messages
+        struct HaltImmediatelyVertex {
+            id: VertexId,
+        }
+
+        #[async_trait]
+        impl Vertex<TestState, WorkflowMessage> for HaltImmediatelyVertex {
+            fn id(&self) -> &VertexId {
+                &self.id
+            }
+
+            async fn compute(
+                &self,
+                _ctx: &mut ComputeContext<'_, TestState, WorkflowMessage>,
+            ) -> Result<ComputeResult<TestUpdate>, PregelError> {
+                Ok(ComputeResult::halt(TestUpdate::empty()))
+            }
+        }
+
+        // Vertex that records if it was activated
+        struct RecordActivationVertex {
+            id: VertexId,
+            activated: Arc<AtomicBool>,
+        }
+
+        #[async_trait]
+        impl Vertex<TestState, WorkflowMessage> for RecordActivationVertex {
+            fn id(&self) -> &VertexId {
+                &self.id
+            }
+
+            async fn compute(
+                &self,
+                ctx: &mut ComputeContext<'_, TestState, WorkflowMessage>,
+            ) -> Result<ComputeResult<TestUpdate>, PregelError> {
+                if ctx.has_messages() {
+                    self.activated.store(true, Ordering::SeqCst);
+                }
+                Ok(ComputeResult::halt(TestUpdate::empty()))
+            }
+        }
+
+        let activated = Arc::new(AtomicBool::new(false));
+
+        let config = PregelConfig::default()
+            .with_execution_mode(ExecutionMode::EdgeDriven);
+        let mut runtime: PregelRuntime<TestState, WorkflowMessage> =
+            PregelRuntime::with_config(config);
+
+        runtime
+            .add_vertex(Arc::new(HaltImmediatelyVertex { id: VertexId::new("entry") }))
+            .add_vertex(Arc::new(RecordActivationVertex {
+                id: VertexId::new("target"),
+                activated: Arc::clone(&activated),
+            }))
+            .set_entry("entry")
+            .add_edge("entry", "target");
+
+        let result = runtime.run(TestState::default()).await;
+        assert!(result.is_ok(), "Workflow should complete successfully");
+
+        // Target should have been activated via edge
+        assert!(activated.load(Ordering::SeqCst),
+            "Target vertex was not activated via edge - C2 fix not working");
+    }
+
+    #[tokio::test]
+    async fn test_edge_driven_chain_execution() {
+        use super::super::config::ExecutionMode;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // Use thread-local to avoid test interference
+        thread_local! {
+            static EXECUTION_ORDER: AtomicUsize = AtomicUsize::new(0);
+        }
+
+        struct OrderedVertex {
+            id: VertexId,
+            expected_order: usize,
+        }
+
+        #[async_trait]
+        impl Vertex<TestState, WorkflowMessage> for OrderedVertex {
+            fn id(&self) -> &VertexId {
+                &self.id
+            }
+
+            async fn compute(
+                &self,
+                _ctx: &mut ComputeContext<'_, TestState, WorkflowMessage>,
+            ) -> Result<ComputeResult<TestUpdate>, PregelError> {
+                let order = EXECUTION_ORDER.with(|counter| counter.fetch_add(1, Ordering::SeqCst));
+                assert_eq!(order, self.expected_order,
+                    "Vertex {} executed out of order", self.id);
+                Ok(ComputeResult::halt(TestUpdate::empty()))
+            }
+        }
+
+        EXECUTION_ORDER.with(|counter| counter.store(0, Ordering::SeqCst));
+
+        let config = PregelConfig::default()
+            .with_execution_mode(ExecutionMode::EdgeDriven);
+        let mut runtime: PregelRuntime<TestState, WorkflowMessage> =
+            PregelRuntime::with_config(config);
+
+        // Create chain: A -> B -> C
+        runtime
+            .add_vertex(Arc::new(OrderedVertex { id: VertexId::new("a"), expected_order: 0 }))
+            .add_vertex(Arc::new(OrderedVertex { id: VertexId::new("b"), expected_order: 1 }))
+            .add_vertex(Arc::new(OrderedVertex { id: VertexId::new("c"), expected_order: 2 }))
+            .set_entry("a")
+            .add_edge("a", "b")
+            .add_edge("b", "c");
+
+        let result = runtime.run(TestState::default()).await;
+        assert!(result.is_ok());
+        assert_eq!(EXECUTION_ORDER.with(|c| c.load(Ordering::SeqCst)), 3, "All 3 vertices should execute");
     }
 }

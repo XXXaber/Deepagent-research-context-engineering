@@ -6,6 +6,21 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// Execution mode for the Pregel runtime
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExecutionMode {
+    /// All vertices start Active. Vertices must explicitly send messages.
+    /// Edges are stored but not used for automatic routing.
+    /// This is the legacy behavior for backward compatibility.
+    #[default]
+    MessageBased,
+
+    /// Only the entry vertex starts Active. Other vertices start Halted.
+    /// When a vertex halts, Activate messages are automatically sent to edge targets.
+    /// This matches LangGraph's execution model.
+    EdgeDriven,
+}
+
 /// Pregel runtime configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PregelConfig {
@@ -31,6 +46,9 @@ pub struct PregelConfig {
 
     /// Retry policy for failed vertices
     pub retry_policy: RetryPolicy,
+
+    /// Execution mode controlling vertex activation and edge routing
+    pub execution_mode: ExecutionMode,
 }
 
 impl Default for PregelConfig {
@@ -43,6 +61,7 @@ impl Default for PregelConfig {
             workflow_timeout: Duration::from_secs(3600), // 1 hour total
             tracing_enabled: true,
             retry_policy: RetryPolicy::default(),
+            execution_mode: ExecutionMode::default(),
         }
     }
 }
@@ -92,6 +111,12 @@ impl PregelConfig {
     /// Set retry policy
     pub fn with_retry_policy(mut self, policy: RetryPolicy) -> Self {
         self.retry_policy = policy;
+        self
+    }
+
+    /// Set the execution mode
+    pub fn with_execution_mode(mut self, mode: ExecutionMode) -> Self {
+        self.execution_mode = mode;
         self
     }
 
@@ -269,5 +294,18 @@ mod tests {
 
         assert_eq!(config.vertex_timeout, Duration::from_secs(60));
         assert_eq!(config.workflow_timeout, Duration::from_secs(120));
+    }
+
+    #[test]
+    fn test_execution_mode_default_is_message_based() {
+        let config = PregelConfig::default();
+        assert_eq!(config.execution_mode, ExecutionMode::MessageBased);
+    }
+
+    #[test]
+    fn test_execution_mode_builder() {
+        let config = PregelConfig::default()
+            .with_execution_mode(ExecutionMode::EdgeDriven);
+        assert_eq!(config.execution_mode, ExecutionMode::EdgeDriven);
     }
 }

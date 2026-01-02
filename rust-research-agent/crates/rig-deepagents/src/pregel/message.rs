@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use super::vertex::VertexId;
 
 /// Trait bound for vertex messages
-pub trait VertexMessage: Clone + Send + Sync + 'static {}
+pub trait VertexMessage: Clone + Send + Sync + 'static {
+    /// Create an activation message for edge-driven routing
+    fn activation_message() -> Self;
+}
 
 /// Priority level for research directions
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -76,7 +79,11 @@ pub enum WorkflowMessage {
     },
 }
 
-impl VertexMessage for WorkflowMessage {}
+impl VertexMessage for WorkflowMessage {
+    fn activation_message() -> Self {
+        WorkflowMessage::Activate
+    }
+}
 
 impl WorkflowMessage {
     /// Create a Data message
@@ -226,5 +233,11 @@ mod tests {
 
         assert!(matches!(activate, WorkflowMessage::Activate));
         assert!(matches!(halt, WorkflowMessage::Halt));
+    }
+
+    #[test]
+    fn test_activation_message() {
+        let msg = WorkflowMessage::activation_message();
+        assert!(matches!(msg, WorkflowMessage::Activate));
     }
 }

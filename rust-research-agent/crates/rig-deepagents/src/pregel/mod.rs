@@ -24,6 +24,17 @@
 //! │  └─────────────────────────────────────────────────────┘   │
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
+//!
+//! # Execution Modes
+//!
+//! The runtime supports two execution modes:
+//!
+//! - `ExecutionMode::MessageBased` (default): All vertices start Active.
+//!   Vertices must explicitly send messages. Backward compatible.
+//!
+//! - `ExecutionMode::EdgeDriven`: Only entry vertex starts Active.
+//!   When vertices halt, activation messages are sent to edge targets.
+//!   Matches LangGraph's execution model.
 
 pub mod vertex;
 pub mod message;
@@ -38,7 +49,7 @@ pub use vertex::{
     BoxedVertex, ComputeContext, ComputeResult, StateUpdate, Vertex, VertexId, VertexState,
 };
 pub use message::{Priority, Source, VertexMessage, WorkflowMessage};
-pub use config::{PregelConfig, RetryPolicy};
+pub use config::{ExecutionMode, PregelConfig, RetryPolicy};
 pub use error::PregelError;
 pub use state::{UnitState, UnitUpdate, WorkflowState};
 pub use runtime::{PregelRuntime, WorkflowResult};
