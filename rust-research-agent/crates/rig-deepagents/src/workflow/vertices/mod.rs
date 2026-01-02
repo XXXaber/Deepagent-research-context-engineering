@@ -5,14 +5,21 @@
 //! # Available Vertices
 //!
 //! - [`agent::AgentVertex`]: LLM-based agent with tool calling
-//! - [`subagent::SubAgentVertex`]: Delegates to sub-agents from registry
 //! - [`tool::ToolVertex`]: Single tool execution with static/dynamic args
+//! - [`router::RouterVertex`]: Conditional routing based on state or LLM decisions
+//! - [`subagent::SubAgentVertex`]: Delegates to sub-agents from registry
+//! - [`parallel::FanOutVertex`]: Broadcasts messages to multiple targets
+//! - [`parallel::FanInVertex`]: Synchronizes messages from multiple sources
 
 pub mod agent;
 pub mod parallel;
+pub mod router;
 pub mod subagent;
-// pub mod tool;
-// pub mod router;
+pub mod tool;
 
-// Future vertex implementations:
-// pub mod parallel;
+// Re-export main vertex types
+pub use agent::AgentVertex;
+pub use parallel::{FanInVertex, FanOutVertex};
+pub use router::RouterVertex;
+pub use subagent::SubAgentVertex;
+pub use tool::ToolVertex;

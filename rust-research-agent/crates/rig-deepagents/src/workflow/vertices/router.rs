@@ -8,10 +8,10 @@ use serde::Serialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-use crate::llm::{LLMConfig, LLMProvider};
+use crate::llm::LLMProvider;
 use crate::pregel::error::PregelError;
 use crate::pregel::message::WorkflowMessage;
-use crate::pregel::state::{UnitUpdate, WorkflowState};
+use crate::pregel::state::WorkflowState;
 use crate::pregel::vertex::{ComputeContext, ComputeResult, StateUpdate, Vertex, VertexId};
 use crate::workflow::node::{Branch, BranchCondition, RouterNodeConfig, RoutingStrategy};
 
@@ -235,11 +235,10 @@ impl<S: WorkflowState + Serialize> Vertex<S, WorkflowMessage> for RouterVertex<S
 mod tests {
     use super::*;
     use crate::error::DeepAgentError;
-    use crate::llm::LLMResponse;
-    use crate::pregel::state::UnitState;
+    use crate::llm::{LLMConfig, LLMResponse};
+    use crate::pregel::state::{UnitState, UnitUpdate};
     use crate::pregel::vertex::VertexState;
     use crate::state::Message as StateMessage;
-    use crate::state::Role;
     use serde_json::json;
     use std::sync::Mutex;
 
@@ -485,7 +484,7 @@ mod tests {
             default: Some("default".to_string()),
         };
 
-        let vertex = RouterVertex::<TestState>::new("router", config, None);
+        let vertex = RouterVertex::<TestState>::new("router", config.clone(), None);
 
         // Test with active = true (should go to "active_route")
         let test_state = TestState::new("test", 0, true, vec![]);
@@ -499,8 +498,7 @@ mod tests {
         assert!(outbox.contains_key(&VertexId::new("active_route")));
 
         // Test with active = false (should go to "inactive_route")
-        let config2 = config.clone();
-        let vertex2 = RouterVertex::<TestState>::new("router2", config2, None);
+        let vertex2 = RouterVertex::<TestState>::new("router2", config, None);
 
         let test_state2 = TestState::new("test", 0, false, vec![]);
         let messages2 = vec![WorkflowMessage::data("input", "test")];

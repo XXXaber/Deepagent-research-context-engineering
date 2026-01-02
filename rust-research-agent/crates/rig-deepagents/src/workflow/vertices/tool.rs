@@ -29,7 +29,7 @@ pub struct ToolVertex<S: WorkflowState> {
     config: ToolNodeConfig,
 
     /// The tool to execute
-    tool: Arc<DynTool>,
+    tool: DynTool,
 
     /// Runtime for tool execution
     runtime: Arc<ToolRuntime>,
@@ -50,7 +50,7 @@ impl<S: WorkflowState> ToolVertex<S> {
     pub fn new(
         id: impl Into<VertexId>,
         config: ToolNodeConfig,
-        tool: Arc<DynTool>,
+        tool: DynTool,
         runtime: Arc<ToolRuntime>,
     ) -> Self {
         Self {
@@ -73,7 +73,7 @@ impl<S: WorkflowState> ToolVertex<S> {
         // 2. Extract the value from the workflow state
         // 3. Merge it into args
 
-        for (arg_name, _state_path) in &self.config.state_arg_paths {
+        for arg_name in self.config.state_arg_paths.keys() {
             // Placeholder: in a real implementation, resolve state_path from state
             // For now, skip dynamic args
             tracing::debug!(
@@ -122,7 +122,7 @@ impl<S: WorkflowState> Vertex<S, WorkflowMessage> for ToolVertex<S> {
 
         // Try to parse result as JSON, fallback to string
         let result_value = serde_json::from_str(&result_str)
-            .unwrap_or_else(|_| serde_json::Value::String(result_str));
+            .unwrap_or(serde_json::Value::String(result_str));
 
         // Build output key based on result_path or default
         let output_key = self
@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn test_tool_vertex_creation() {
-        let mock_tool: Arc<DynTool> = Arc::new(MockTool::new("test_tool", serde_json::json!({"result": "ok"})));
+        let mock_tool: DynTool = Arc::new(MockTool::new("test_tool", serde_json::json!({"result": "ok"})));
         let runtime = create_test_runtime();
 
         let config = ToolNodeConfig {
@@ -214,7 +214,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_vertex_execute_with_static_args() {
-        let mock_tool: Arc<DynTool> = Arc::new(MockTool::new(
+        let mock_tool: DynTool = Arc::new(MockTool::new(
             "search",
             serde_json::json!({"results": ["item1", "item2"]}),
         ));
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn test_tool_vertex_build_arguments() {
-        let mock_tool: Arc<DynTool> = Arc::new(MockTool::new("tool", serde_json::json!({})));
+        let mock_tool: DynTool = Arc::new(MockTool::new("tool", serde_json::json!({})));
         let runtime = create_test_runtime();
 
         let mut static_args = HashMap::new();
@@ -288,7 +288,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_vertex_default_result_path() {
-        let mock_tool: Arc<DynTool> = Arc::new(MockTool::new("my_tool", serde_json::json!("done")));
+        let mock_tool: DynTool = Arc::new(MockTool::new("my_tool", serde_json::json!("done")));
         let runtime = create_test_runtime();
 
         // No result_path set - should default to "{tool_name}_result"

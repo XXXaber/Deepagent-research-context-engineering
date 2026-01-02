@@ -45,8 +45,9 @@
 //!     .build()?;
 //! ```
 
-pub mod node;
+pub mod compiled;
 pub mod graph;
+pub mod node;
 pub mod vertices;
 
 pub use node::{
@@ -55,5 +56,6 @@ pub use node::{
     ToolNodeConfig,
 };
 pub use graph::{BuiltWorkflowGraph, GraphEdge, GraphNode, WorkflowBuildError, WorkflowGraph, END};
+pub use compiled::{CompiledWorkflow, PassthroughVertex, WorkflowCompileError};
 
 pub use vertices::agent::AgentVertex;
