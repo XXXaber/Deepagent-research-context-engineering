@@ -41,6 +41,9 @@ serde_yaml = "0.9"
 # Directory utilities for skill paths
 dirs = "5"
 
+# CLI argument parsing for skill-validator binary
+clap = { version = "4", features = ["derive"] }
+
 [dev-dependencies]
 # OpenAI support is built into rig-core
 tokio-test = "0.4"
@@ -53,3 +56,7 @@ wiremock = "0.6"  # For HTTP mocking in tests
 [[bench]]
 name = "middleware_benchmark"
 harness = false
+
+[[bin]]
+name = "skill-validator"
+path = "src/bin/skill_validator.rs"
