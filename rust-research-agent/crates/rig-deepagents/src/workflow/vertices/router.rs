@@ -236,7 +236,7 @@ mod tests {
     use super::*;
     use crate::error::DeepAgentError;
     use crate::llm::{LLMConfig, LLMResponse};
-    use crate::pregel::state::{UnitState, UnitUpdate};
+    use crate::pregel::state::UnitUpdate;
     use crate::pregel::vertex::VertexState;
     use crate::state::Message as StateMessage;
     use serde_json::json;

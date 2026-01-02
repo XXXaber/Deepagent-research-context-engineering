@@ -34,6 +34,7 @@ pub mod tools;
 pub mod llm;
 pub mod pregel;
 pub mod workflow;
+pub mod skills;
 
 // Re-exports for convenience
 pub use error::{BackendError, MiddlewareError, DeepAgentError, WriteResult, EditResult};

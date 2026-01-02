@@ -32,6 +32,15 @@ humantime-serde = "1"  # For Duration serialization in configs
 zstd = "0.13"  # For checkpoint compression
 regex = "1"
 
+# HTTP client for external API tools (Tavily, etc.)
+reqwest = { version = "0.12", features = ["json"] }
+
+# YAML parsing for skill frontmatter
+serde_yaml = "0.9"
+
+# Directory utilities for skill paths
+dirs = "5"
+
 [dev-dependencies]
 # OpenAI support is built into rig-core
 tokio-test = "0.4"
@@ -39,6 +48,7 @@ dotenv = "0.15"
 criterion = { version = "0.5", features = ["async_tokio"] }
 tempfile = "3"  # For filesystem tests
 static_assertions = "1"  # For compile-time trait checks
+wiremock = "0.6"  # For HTTP mocking in tests
 
 [[bench]]
 name = "middleware_benchmark"
