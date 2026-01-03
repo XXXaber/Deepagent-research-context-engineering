@@ -44,10 +44,18 @@
 mod file;
 #[cfg(feature = "checkpointer-sqlite")]
 mod sqlite;
+#[cfg(feature = "checkpointer-redis")]
+mod redis;
+#[cfg(feature = "checkpointer-postgres")]
+mod postgres;
 
 pub use file::FileCheckpointer;
 #[cfg(feature = "checkpointer-sqlite")]
 pub use sqlite::SqliteCheckpointer;
+#[cfg(feature = "checkpointer-redis")]
+pub use self::redis::RedisCheckpointer;
+#[cfg(feature = "checkpointer-postgres")]
+pub use postgres::PostgresCheckpointer;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -344,14 +352,26 @@ where
 
         #[cfg(feature = "checkpointer-redis")]
         CheckpointerConfig::Redis { url, ttl_seconds } => {
-            // Redis checkpointer will be implemented in Task 8.2.4
-            Err(PregelError::not_implemented("Redis checkpointer"))
+            let rt = tokio::runtime::Handle::try_current()
+                .map_err(|_| PregelError::checkpoint_error("No tokio runtime available"))?;
+
+            let checkpointer = rt.block_on(async {
+                RedisCheckpointer::with_ttl(&url, workflow_id, ttl_seconds).await
+            })?;
+
+            Ok(Box::new(checkpointer))
         }
 
         #[cfg(feature = "checkpointer-postgres")]
         CheckpointerConfig::Postgres { url } => {
-            // PostgreSQL checkpointer will be implemented in Task 8.2.5
-            Err(PregelError::not_implemented("PostgreSQL checkpointer"))
+            let rt = tokio::runtime::Handle::try_current()
+                .map_err(|_| PregelError::checkpoint_error("No tokio runtime available"))?;
+
+            let checkpointer = rt.block_on(async {
+                PostgresCheckpointer::new(&url, workflow_id).await
+            })?;
+
+            Ok(Box::new(checkpointer))
         }
     }
 }

@@ -13,8 +13,10 @@
 //! Python Reference: deepagents/middleware/subagents.py
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
+use tokio::time::timeout;
 
 use crate::backends::Backend;
 use crate::error::MiddlewareError;
@@ -191,9 +193,23 @@ impl DefaultSubAgentExecutorFactory {
         // Convert isolated state to AgentState with prompt
         let initial_state = state.to_agent_state(prompt);
 
-        // Execute (TODO: add timeout support from spec.timeout)
-        let result_state = executor.run(initial_state).await
-            .map_err(|e| MiddlewareError::SubAgentExecution(e.to_string()))?;
+        // Execute with timeout support (default 5 minutes if not specified)
+        let timeout_duration = spec.timeout.unwrap_or(Duration::from_secs(300));
+
+        let result_state = match timeout(timeout_duration, executor.run(initial_state)).await {
+            Ok(result) => result.map_err(|e| MiddlewareError::SubAgentExecution(e.to_string()))?,
+            Err(_) => {
+                tracing::warn!(
+                    subagent = %spec.name,
+                    timeout_secs = timeout_duration.as_secs(),
+                    "SubAgent execution timed out"
+                );
+                return Err(MiddlewareError::SubAgentTimeout {
+                    subagent_id: spec.name.clone(),
+                    duration_secs: timeout_duration.as_secs(),
+                });
+            }
+        };
 
         // Extract final message
         let final_message = result_state

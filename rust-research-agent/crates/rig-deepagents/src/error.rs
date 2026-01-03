@@ -62,6 +62,12 @@ pub enum MiddlewareError {
 
     #[error("Recursion limit exceeded: {0}")]
     RecursionLimit(String),
+
+    #[error("SubAgent '{subagent_id}' timed out after {duration_secs}s")]
+    SubAgentTimeout {
+        subagent_id: String,
+        duration_secs: u64,
+    },
 }
 
 /// DeepAgent 최상위 에러

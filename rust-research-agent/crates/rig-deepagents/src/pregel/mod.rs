@@ -53,6 +53,6 @@ pub use message::{Priority, Source, VertexMessage, WorkflowMessage};
 pub use config::{ExecutionMode, PregelConfig, RetryPolicy};
 pub use error::PregelError;
 pub use state::{UnitState, UnitUpdate, WorkflowState};
-pub use runtime::{PregelRuntime, WorkflowResult};
+pub use runtime::{EdgeMetadata, PregelRuntime, WorkflowResult};
 pub use checkpoint::{Checkpoint, Checkpointer, CheckpointerConfig, MemoryCheckpointer, FileCheckpointer, create_checkpointer};
 pub use visualization::{sanitize_id, render_node, render_node_with_state, render_edge};

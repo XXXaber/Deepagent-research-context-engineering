@@ -49,8 +49,10 @@ use crate::middleware::subagent::{SubAgentExecutorFactory, SubAgentRegistry};
 use crate::workflow::graph::{BuiltWorkflowGraph, END};
 use crate::workflow::node::NodeKind;
 use crate::workflow::vertices::{
-    AgentVertex, FanInVertex, FanOutVertex, RouterVertex, SubAgentVertex,
+    AgentVertex, FanInVertex, FanOutVertex, RouterVertex, SubAgentVertex, ToolVertex,
 };
+use crate::runtime::ToolRuntime;
+use crate::state::AgentState;
 
 /// Errors that can occur during workflow compilation
 #[derive(Debug, Error)]
@@ -321,9 +323,42 @@ impl<S: WorkflowState + Serialize> CompiledWorkflow<S> {
                     }
                 }
             }
-            NodeKind::Tool(_config) => {
-                // TODO: ToolVertex requires ToolRuntime and registered tool
-                // For now, use PassthroughVertex as placeholder
+            NodeKind::Tool(config) => {
+                // Attempt to create a real ToolVertex if registry and backend are available
+                if let Some(tool) = tool_registry.get(&config.tool_name) {
+                    if let Some(backend) = backend {
+                        // Create ToolRuntime with default AgentState and provided backend
+                        let runtime = ToolRuntime::new(
+                            AgentState::new(),
+                            Arc::clone(backend),
+                        );
+                        tracing::debug!(
+                            node_id = node_id,
+                            tool_name = %config.tool_name,
+                            "Creating ToolVertex with registry tool"
+                        );
+                        return Ok(Arc::new(ToolVertex::<S>::new(
+                            node_id,
+                            config,
+                            tool.clone(),
+                            Arc::new(runtime),
+                        )));
+                    } else {
+                        tracing::warn!(
+                            node_id = node_id,
+                            tool_name = %config.tool_name,
+                            "Tool node requires backend for ToolRuntime - using passthrough"
+                        );
+                    }
+                } else {
+                    tracing::warn!(
+                        node_id = node_id,
+                        tool_name = %config.tool_name,
+                        "Tool '{}' not found in registry - using passthrough",
+                        config.tool_name
+                    );
+                }
+                // Fallback to passthrough when tool or backend not available
                 Ok(Arc::new(PassthroughVertex::new(node_id)))
             }
             NodeKind::Router(config) => {

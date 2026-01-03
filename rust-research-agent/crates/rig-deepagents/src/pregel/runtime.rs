@@ -14,6 +14,13 @@ use super::message::VertexMessage;
 use super::state::WorkflowState;
 use super::vertex::{BoxedVertex, ComputeContext, ComputeResult, VertexId, VertexState};
 
+/// Metadata for an edge between vertices
+#[derive(Debug, Clone, Default)]
+pub struct EdgeMetadata {
+    /// Optional label for visualization in Mermaid diagrams
+    pub label: Option<String>,
+}
+
 /// Result of a workflow execution
 #[derive(Debug, Clone)]
 pub struct WorkflowResult<S: WorkflowState> {
@@ -44,8 +51,8 @@ where
     vertex_states: HashMap<VertexId, VertexState>,
     /// Pending messages for each vertex (delivered at start of next superstep)
     message_queues: HashMap<VertexId, Vec<M>>,
-    /// Edges defining message routing (source -> targets)
-    edges: HashMap<VertexId, Vec<VertexId>>,
+    /// Edges defining message routing (source -> targets with optional metadata)
+    edges: HashMap<VertexId, Vec<(VertexId, Option<EdgeMetadata>)>>,
     /// Retry attempt counts per vertex (for retry policy enforcement)
     retry_counts: HashMap<VertexId, usize>,
     /// Entry vertex ID (for EdgeDriven mode reference)
@@ -89,11 +96,31 @@ where
         self
     }
 
-    /// Add an edge between vertices
+    /// Add an edge between vertices (without label)
     pub fn add_edge(&mut self, from: impl Into<VertexId>, to: impl Into<VertexId>) -> &mut Self {
+        self.add_edge_with_label(from, to, None)
+    }
+
+    /// Add an edge between vertices with an optional label
+    ///
+    /// Labels are displayed on Mermaid diagrams for visualization.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// runtime.add_edge_with_label("router", "success_path", Some("success".into()));
+    /// runtime.add_edge_with_label("router", "error_path", Some("error".into()));
+    /// ```
+    pub fn add_edge_with_label(
+        &mut self,
+        from: impl Into<VertexId>,
+        to: impl Into<VertexId>,
+        label: Option<String>,
+    ) -> &mut Self {
         let from = from.into();
         let to = to.into();
-        self.edges.entry(from).or_default().push(to);
+        let metadata = label.map(|l| EdgeMetadata { label: Some(l) });
+        self.edges.entry(from).or_default().push((to, metadata));
         self
     }
 
@@ -388,7 +415,7 @@ where
         for source_id in newly_halted {
             // Get edge targets for this source
             if let Some(targets) = self.edges.get(source_id) {
-                for target_id in targets {
+                for (target_id, _metadata) in targets {
                     // Send Activate message to each edge target
                     if let Some(queue) = self.message_queues.get_mut(target_id) {
                         queue.push(M::activation_message());
@@ -518,11 +545,11 @@ where
         // Empty line before edges
         writeln!(output).unwrap();
 
-        // Render edges
+        // Render edges with labels
         for (from, targets) in &self.edges {
-            for to in targets {
-                // TODO: Add edge label support when edge metadata is available
-                writeln!(output, "{}", render_edge(from, to, None)).unwrap();
+            for (to, metadata) in targets {
+                let label = metadata.as_ref().and_then(|m| m.label.as_deref());
+                writeln!(output, "{}", render_edge(from, to, label)).unwrap();
             }
         }
 
@@ -539,7 +566,10 @@ where
         self.vertices
             .keys()
             .filter(|id| {
-                self.edges.get(*id).is_none_or(|targets| targets.is_empty())
+                match self.edges.get(*id) {
+                    None => true,
+                    Some(targets) => targets.is_empty(),
+                }
             })
             .collect()
     }
