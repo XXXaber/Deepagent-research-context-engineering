@@ -1,0 +1,13 @@
+[package]
+name = "rig-rlm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+oneshot = { version = "0.1.11", default-features = false }
+pyo3 = { version = "0.27.2", features = ["auto-initialize"] }
+reqwest = "0.12.26"
+rig-core = "0.27.0"
+tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
