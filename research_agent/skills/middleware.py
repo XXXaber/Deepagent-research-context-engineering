@@ -17,9 +17,11 @@
 research_agent 프로젝트용으로 deepagents-cli에서 적응함.
 """
 
+from __future__ import annotations
+
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import NotRequired, TypedDict, cast
+from typing import Any, NotRequired, TypedDict, cast
 
 from langchain.agents.middleware.types import (
     AgentMiddleware,
@@ -27,6 +29,7 @@ from langchain.agents.middleware.types import (
     ModelRequest,
     ModelResponse,
 )
+from langchain_core.messages import SystemMessage
 from langgraph.runtime import Runtime
 
 from research_agent.skills.load import SkillMetadata, list_skills
@@ -177,8 +180,8 @@ class SkillsMiddleware(AgentMiddleware):
         return "\n".join(lines)
 
     def before_agent(
-        self, state: SkillsState, runtime: Runtime
-    ) -> SkillsStateUpdate | None:
+        self, state: AgentState[Any], runtime: Runtime[Any]
+    ) -> dict[str, Any] | None:
         """에이전트 실행 전에 스킬 메타데이터를 로드한다.
 
         세션 시작 시 한 번 실행되어 사용자 레벨과 프로젝트 레벨
@@ -191,12 +194,13 @@ class SkillsMiddleware(AgentMiddleware):
         Returns:
             skills_metadata가 채워진 업데이트된 상태.
         """
+        _ = runtime
         # 디렉토리 변경을 캐치하기 위해 각 상호작용마다 스킬 다시 로드
         skills = list_skills(
             user_skills_dir=self.skills_dir,
             project_skills_dir=self.project_skills_dir,
         )
-        return SkillsStateUpdate(skills_metadata=skills)
+        return {"skills_metadata": skills}
 
     def wrap_model_call(
         self,
@@ -215,7 +219,9 @@ class SkillsMiddleware(AgentMiddleware):
             핸들러의 모델 응답.
         """
         # 상태에서 스킬 메타데이터 가져오기
-        skills_metadata = request.state.get("skills_metadata", [])
+        skills_metadata = cast(
+            list[SkillMetadata], request.state.get("skills_metadata", [])
+        )
 
         # 스킬 위치와 목록 포맷팅
         skills_locations = self._format_skills_locations()
@@ -227,12 +233,13 @@ class SkillsMiddleware(AgentMiddleware):
             skills_list=skills_list,
         )
 
-        if request.system_prompt:
-            system_prompt = request.system_prompt + "\n\n" + skills_section
+        existing = str(request.system_message.content) if request.system_message else ""
+        if existing:
+            system_prompt = existing + "\n\n" + skills_section
         else:
             system_prompt = skills_section
 
-        return handler(request.override(system_prompt=system_prompt))
+        return handler(request.override(system_message=SystemMessage(content=system_prompt)))
 
     async def awrap_model_call(
         self,
@@ -250,7 +257,7 @@ class SkillsMiddleware(AgentMiddleware):
         """
         # state_schema로 인해 상태가 SkillsState임이 보장됨
         state = cast("SkillsState", request.state)
-        skills_metadata = state.get("skills_metadata", [])
+        skills_metadata = cast(list[SkillMetadata], state.get("skills_metadata", []))
 
         # 스킬 위치와 목록 포맷팅
         skills_locations = self._format_skills_locations()
@@ -262,10 +269,12 @@ class SkillsMiddleware(AgentMiddleware):
             skills_list=skills_list,
         )
 
-        # 시스템 프롬프트에 주입
-        if request.system_prompt:
-            system_prompt = request.system_prompt + "\n\n" + skills_section
+        existing = str(request.system_message.content) if request.system_message else ""
+        if existing:
+            system_prompt = existing + "\n\n" + skills_section
         else:
             system_prompt = skills_section
 
-        return await handler(request.override(system_prompt=system_prompt))
+        return await handler(
+            request.override(system_message=SystemMessage(content=system_prompt))
+        )

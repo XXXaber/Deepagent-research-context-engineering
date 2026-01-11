@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from typing import Any
 
 
@@ -42,8 +41,6 @@ def query_arxiv(
         Output format: "text", "json", or "markdown" (default: "text").
 
     Returns:
-    -------
-    str
         The formatted search results or an error message.
     """
     try:
@@ -97,9 +94,7 @@ def format_output(papers: list[dict[str, Any]], query: str, output_format: str) 
     output_format : str
         Output format: "text", "json", or "markdown".
 
-    Returns
-    -------
-    str
+    Returns:
         Formatted output string.
     """
     if output_format == "json":
@@ -152,7 +147,7 @@ def format_output(papers: list[dict[str, Any]], query: str, output_format: str) 
 
 
 def main() -> None:
-    """Main entry point for the arXiv search CLI."""
+    """Run the arXiv search CLI."""
     parser = argparse.ArgumentParser(
         description="Search arXiv for academic research papers",
         epilog="""

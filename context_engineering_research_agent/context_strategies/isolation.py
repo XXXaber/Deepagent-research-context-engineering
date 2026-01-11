@@ -8,7 +8,7 @@ DeepAgents의 SubAgentMiddleware에서 task() 도구로 구현되어 있습니�
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict, cast
 
 from langchain.agents.middleware.types import (
     AgentMiddleware,
@@ -82,10 +82,10 @@ class ContextIsolationStrategy(AgentMiddleware):
 
         for spec in self._subagents:
             if "runnable" in spec:
-                compiled = spec  # type: ignore
+                compiled = cast(CompiledSubAgentSpec, spec)
                 agents[compiled["name"]] = compiled["runnable"]
             elif self._agent_factory:
-                simple = spec  # type: ignore
+                simple = cast(SubAgentSpec, spec)
                 agents[simple["name"]] = self._agent_factory(
                     model=simple.get("model", self.config.default_model),
                     system_prompt=simple["system_prompt"],

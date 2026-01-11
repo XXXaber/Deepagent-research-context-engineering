@@ -73,8 +73,11 @@ class DockerSandboxSession:
                 pids_limit=128,
                 working_dir=self.workspace_root,
             )
+            container = self._container
+            if container is None:
+                raise RuntimeError("Docker 컨테이너 생성에 실패했습니다")
             await asyncio.to_thread(
-                self._container.exec_run,
+                container.exec_run,
                 f"mkdir -p {self.workspace_root}/{META_DIR} {self.workspace_root}/{SHARED_DIR}",
             )
         except Exception as exc:

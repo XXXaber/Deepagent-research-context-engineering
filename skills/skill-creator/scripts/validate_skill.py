@@ -233,7 +233,7 @@ def validate_skill(skill_path: Path) -> ValidationResult:
 
 
 def main() -> int:
-    """Main entry point."""
+    """Run the main entry point."""
     if len(sys.argv) < 2:
         print("Usage: python validate_skill.py <skill_path>")
         print("Example: python validate_skill.py ~/.deepagents/skills/my-skill/")

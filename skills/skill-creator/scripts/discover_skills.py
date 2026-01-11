@@ -24,7 +24,6 @@ Exit Codes:
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -215,7 +214,7 @@ def get_default_skills_paths() -> list[Path]:
 
 
 def main() -> int:
-    """Main entry point."""
+    """Run the main entry point."""
     parser = argparse.ArgumentParser(
         description="Discover and index existing skills for triage."
     )

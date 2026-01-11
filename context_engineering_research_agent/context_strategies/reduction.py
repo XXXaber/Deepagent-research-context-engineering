@@ -38,9 +38,11 @@ middleware = SummarizationMiddleware(
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import cast
 
 from langchain.agents.middleware.types import (
     AgentMiddleware,
+    AnyMessage,
     ModelRequest,
     ModelResponse,
 )
@@ -278,13 +280,12 @@ class ContextReductionStrategy(AgentMiddleware):
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
         """모델 호출을 래핑하여 필요시 컨텍스트를 축소합니다."""
-        messages = list(request.state.get("messages", []))
-
+        messages = cast(list[BaseMessage], request.messages)
         reduced_messages, result = self.reduce_context(messages)
-
         if result.was_reduced:
-            modified_state = {**request.state, "messages": reduced_messages}
-            request = request.override(state=modified_state)
+            request = request.override(
+                messages=cast(list[AnyMessage], reduced_messages)
+            )
 
         return handler(request)
 
@@ -294,13 +295,12 @@ class ContextReductionStrategy(AgentMiddleware):
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
         """비동기 모델 호출을 래핑합니다."""
-        messages = list(request.state.get("messages", []))
-
+        messages = cast(list[BaseMessage], request.messages)
         reduced_messages, result = self.reduce_context(messages)
-
         if result.was_reduced:
-            modified_state = {**request.state, "messages": reduced_messages}
-            request = request.override(state=modified_state)
+            request = request.override(
+                messages=cast(list[AnyMessage], reduced_messages)
+            )
 
         return await handler(request)
 

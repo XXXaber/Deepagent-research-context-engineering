@@ -9,6 +9,7 @@ from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend
+from langchain.agents.middleware.types import AgentMiddleware
 from langchain.tools import ToolRuntime
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
@@ -212,7 +213,7 @@ def create_context_aware_agent(
             routes={"/": local_fs_backend},
         )
 
-    middlewares = []
+    middlewares: list[AgentMiddleware] = []
 
     if enable_offloading:
         offload_config = OffloadingConfig(

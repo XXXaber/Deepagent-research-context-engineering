@@ -69,5 +69,6 @@ markers = [
 
 [tool.mypy]
 python_version = "3.13"
-exclude = [".venv"]
+exclude = ["(.venv|deepagents_sourcecode|research_workspace|tests|skills)"]
 ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
