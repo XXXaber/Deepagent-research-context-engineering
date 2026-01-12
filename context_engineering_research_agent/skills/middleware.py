@@ -1,11 +1,11 @@
 """스킬 시스템 미들웨어.
 
-Progressive Disclosure 패턴으로 스킬 메타데이터를 시스템 프롬프트에 주입합니다.
+Progressive Disclosure 패턴으로 Agent Skills 메타데이터를 시스템 프롬프트에 주입합니다.
 """
 
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import NotRequired, TypedDict, cast
+from typing import Any, NotRequired, TypedDict, cast
 
 from langchain.agents.middleware.types import (
     AgentMiddleware,
@@ -13,6 +13,7 @@ from langchain.agents.middleware.types import (
     ModelRequest,
     ModelResponse,
 )
+from langchain_core.messages import SystemMessage
 from langgraph.runtime import Runtime
 
 from context_engineering_research_agent.skills.load import SkillMetadata, list_skills
@@ -111,20 +112,24 @@ class SkillsMiddleware(AgentMiddleware):
         return "\n".join(lines)
 
     def before_agent(
-        self, state: SkillsState, runtime: Runtime
-    ) -> SkillsStateUpdate | None:
+        self,
+        state: AgentState[Any],  # noqa: ARG002
+        runtime: Runtime,  # noqa: ARG002
+    ) -> dict[str, Any] | None:
         skills = list_skills(
             user_skills_dir=self.skills_dir,
             project_skills_dir=self.project_skills_dir,
         )
-        return SkillsStateUpdate(skills_metadata=skills)
+        return cast("dict[str, Any]", SkillsStateUpdate(skills_metadata=skills))
 
     def wrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        skills_metadata = request.state.get("skills_metadata", [])
+        skills_metadata = cast(
+            "list[SkillMetadata]", request.state.get("skills_metadata", [])
+        )
 
         skills_locations = self._format_skills_locations()
         skills_list = self._format_skills_list(skills_metadata)
@@ -139,7 +144,7 @@ class SkillsMiddleware(AgentMiddleware):
         else:
             system_prompt = skills_section
 
-        return handler(request.override(system_prompt=system_prompt))
+        return handler(request.override(system_message=SystemMessage(system_prompt)))
 
     async def awrap_model_call(
         self,
@@ -162,4 +167,6 @@ class SkillsMiddleware(AgentMiddleware):
         else:
             system_prompt = skills_section
 
-        return await handler(request.override(system_prompt=system_prompt))
+        return await handler(
+            request.override(system_message=SystemMessage(system_prompt))
+        )

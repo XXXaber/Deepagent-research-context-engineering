@@ -85,11 +85,13 @@ _cached_model = None
 def _infer_openrouter_model_name(model: BaseChatModel) -> str | None:
     """OpenRouter 모델에서 모델명을 추출합니다.
 
+    API 문서 주소: https://openrouter.ai/docs/api/api-reference/models/get-models
+
     Args:
         model: LangChain 모델 인스턴스
 
     Returns:
-        OpenRouter 모델명 (예: "anthropic/claude-3-sonnet") 또는 None
+        OpenRouter 모델명 (예: "anthropic/claude-sonnet-4-5") 또는 None
     """
     if detect_provider(model) != ProviderType.OPENROUTER:
         return None
