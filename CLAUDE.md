@@ -6,9 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A multi-agent research system demonstrating **FileSystem-based Context Engineering** using LangChain's DeepAgents framework. The system includes:
 - **Python DeepAgents**: LangChain-based multi-agent orchestration with web research capabilities
-- **Rust `rig-deepagents`**: A port/reimagining using the Rig framework with Pregel-inspired graph execution
-
-The system enables agents to conduct web research, delegate tasks to sub-agents, and generate comprehensive reports with persistent filesystem state.
+- **Context Engineering Module**: Experimental platform with 5 context optimization strategies
+- **Rust `rig-deepagents`**: Pregel-inspired graph execution runtime using Rig framework
 
 ## Development Commands
 
@@ -22,11 +21,16 @@ uv sync
 langgraph dev
 
 # Linting and formatting
-ruff check research_agent/
-ruff format research_agent/
+uv run ruff check .
+uv run ruff format .
 
 # Type checking
-mypy research_agent/
+uv run mypy .
+
+# Run tests
+uv run pytest tests/                      # All tests
+uv run pytest tests/test_agent.py -v      # Single file
+uv run pytest -k "test_researcher" -v     # Pattern match
 ```
 
 ### Frontend UI (deep-agents-ui/)
@@ -40,29 +44,19 @@ yarn lint         # ESLint
 yarn format       # Prettier
 ```
 
-### Interactive Notebook Development
+### Rust `rig-deepagents`
 
 ```bash
-# Open Jupyter for interactive agent testing
-jupyter notebook DeepAgent_research.ipynb
-```
+cd rust-research-agent/rig-deepagents
 
-The `research_agent/utils.py` module provides Rich-formatted display helpers for notebooks:
-- `format_messages(messages)` - Renders messages with colored panels (Human=blue, AI=green, Tool=yellow)
-- `show_prompt(text, title)` - Displays prompts with XML/header syntax highlighting
-
-### Rust `rig-deepagents` Crate
-
-```bash
-cd rust-research-agent/crates/rig-deepagents
-
-# Run all tests (159 tests)
+# Run all tests
 cargo test
 
 # Run tests for a specific module
 cargo test pregel::          # Pregel runtime tests
 cargo test workflow::        # Workflow node tests
 cargo test middleware::      # Middleware tests
+cargo test checkpointing     # Checkpointing tests
 
 # Linting (strict, treats warnings as errors)
 cargo clippy -- -D warnings
@@ -82,16 +76,17 @@ cargo build --features checkpointer-postgres
 ## Required Environment Variables
 
 Copy `env.example` to `.env`:
-- `OPENAI_API_KEY` - For gpt-4.1 model
-- `TAVILY_API_KEY` - For web search functionality
-- `LANGSMITH_API_KEY` - Optional, format `lsv2_pt_...` for tracing
-- `LANGSMITH_TRACING` / `LANGSMITH_PROJECT` - Optional tracing config
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `OPENAI_API_KEY` | Yes | gpt-4.1 model |
+| `TAVILY_API_KEY` | Yes | Web search |
+| `ANTHROPIC_API_KEY` | No | Claude models + prompt caching |
+| `LANGSMITH_API_KEY` | No | Tracing (`lsv2_pt_...`) |
 
 ## Architecture
 
 ### Multi-SubAgent System
-
-The system uses a three-tier agent hierarchy with two distinct SubAgent types:
 
 ```
 Main Orchestrator Agent (agent.py)
@@ -113,52 +108,36 @@ Main Orchestrator Agent (agent.py)
 | CompiledSubAgent | `{"runnable": CompiledStateGraph}` | Multi-turn autonomous | Complex research with self-planning |
 | Simple SubAgent | `{"system_prompt": str}` | Single response | Quick tasks, file ops |
 
-### Core Components
+### Context Engineering Strategies (context_engineering_research_agent/)
 
-**`research_agent/agent.py`** - Orchestrator configuration:
-- LLM: `ChatOpenAI(model="gpt-4.1", temperature=0.0)`
-- Creates researcher via `get_researcher_subagent()` (CompiledSubAgent)
-- Defines `explorer_agent`, `synthesizer_agent` (Simple SubAgents)
-- Assembles `ALL_SUBAGENTS = [researcher_subagent, *SIMPLE_SUBAGENTS]`
+Five strategies for optimizing LLM context window usage:
 
-**`research_agent/researcher/`** - Autonomous researcher module:
-- `agent.py`: `create_researcher_agent()` factory and `get_researcher_subagent()` wrapper
-- `prompts.py`: `AUTONOMOUS_RESEARCHER_INSTRUCTIONS` with three-phase workflow (Exploratory → Directed → Synthesis)
+| Strategy | File | Trigger |
+|----------|------|---------|
+| **Offloading** | `context_strategies/offloading.py` | Tool result > 20,000 tokens |
+| **Reduction** | `context_strategies/reduction.py` | Context usage > 85% |
+| **Retrieval** | grep/glob/read_file tools | Always available |
+| **Isolation** | SubAgent `task()` tool | Complex subtasks |
+| **Caching** | `context_strategies/caching.py` | Anthropic provider |
 
-**Backend Factory Pattern** - The `backend_factory(rt: ToolRuntime)` function demonstrates the recommended pattern:
+Middleware stack order matters: Offloading → Reduction → Caching → Telemetry
+
+### Backend Factory Pattern
+
+The `backend_factory(rt: ToolRuntime)` function demonstrates the recommended pattern:
 ```python
 CompositeBackend(
     default=StateBackend(rt),      # In-memory state (temporary files)
     routes={"/": fs_backend}       # Route "/" paths to FilesystemBackend
 )
 ```
-This enables routing: paths starting with "/" go to persistent local filesystem (`research_workspace/`), others use ephemeral state.
-
-**`research_agent/prompts.py`** - Prompt templates:
-- `RESEARCH_WORKFLOW_INSTRUCTIONS` - Main workflow (plan → save → delegate → synthesize → write → verify)
-- `SUBAGENT_DELEGATION_INSTRUCTIONS` - When to parallelize (comparisons) vs single agent (overviews)
-- `EXPLORER_INSTRUCTIONS` - Fast read-only exploration with filesystem tools
-- `SYNTHESIZER_INSTRUCTIONS` - Multi-source integration with confidence levels
-
-**`research_agent/tools.py`** - Research tools:
-- `tavily_search(query, max_results, topic)` - Searches web, fetches full page content, converts to markdown
-- `think_tool(reflection)` - Explicit reflection step for deliberate research
-
-**`langgraph.json`** - Deployment config pointing to `./research_agent/agent.py:agent`
-
-### Context Engineering Pattern
-
-The filesystem acts as long-term memory:
-1. Agent reads/writes files in virtual `research_workspace/`
-2. Structured outputs: reports, TODOs, request files
-3. Middleware auto-injects filesystem and sub-agent tools
-4. Automatic context summarization for token efficiency
+Paths starting with "/" go to persistent local filesystem (`research_workspace/`), others use ephemeral state.
 
 ### DeepAgents Auto-Injected Tools
 
 The `create_deep_agent()` function automatically adds these tools via middleware:
 - **TodoListMiddleware**: `write_todos` - Task planning and progress tracking
-- **FilesystemMiddleware**: `ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep` - File operations
+- **FilesystemMiddleware**: `ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`
 - **SubAgentMiddleware**: `task` - Delegate work to sub-agents
 - **SkillsMiddleware**: Progressive skill disclosure via `skills/` directory
 
@@ -166,60 +145,65 @@ Custom tools (`tavily_search`, `think_tool`) are added explicitly in `agent.py`.
 
 ### Skills System
 
-Project-level skills are located in `PROJECT_ROOT/skills/`:
-- `academic-search/` - arXiv paper search with structured output
-- `data-synthesis/` - Multi-source data integration and analysis
+Project-level skills in `skills/`:
+- `academic-search/` - arXiv paper search
+- `data-synthesis/` - Multi-source data integration
 - `report-writing/` - Structured report generation
 - `skill-creator/` - Meta-skill for creating new skills
 
-Each skill has a `SKILL.md` file with YAML frontmatter (name, description) and detailed instructions. The SkillsMiddleware uses Progressive Disclosure: only skill metadata is injected into the system prompt at session start; full skill content is read on-demand when needed.
-
-### Research Workflow
-
-**Orchestrator workflow:**
-```
-Plan → Save Request → Delegate to Sub-agents → Synthesize → Write Report → Verify
-```
-
-**Autonomous Researcher workflow (breadth-first, then depth):**
-```
-Phase 1: Exploratory Search (1-2 searches) → Identify directions
-Phase 2: Directed Research (1-2 searches per direction) → Deep dive
-Phase 3: Synthesis → Combine findings with source agreement analysis
-```
-
-Sub-agents operate with token budgets (5-6 max searches) and explicit reflection loops (Search → think_tool → Decide → Repeat).
+Each skill has `SKILL.md` with YAML frontmatter. SkillsMiddleware uses Progressive Disclosure: only metadata injected at session start, full content read on-demand.
 
 ## Rust `rig-deepagents` Architecture
 
-The Rust crate provides a Pregel-inspired graph execution runtime for agent workflows.
+Pregel-inspired graph execution runtime for agent workflows.
 
 ### Module Structure
 
 ```
-rust-research-agent/crates/rig-deepagents/src/
+rust-research-agent/rig-deepagents/src/
 ├── lib.rs              # Library entry point and re-exports
 ├── pregel/             # Pregel Runtime (graph execution engine)
-│   ├── runtime.rs      # Superstep orchestration, workflow timeout, retry policies
+│   ├── runtime.rs      # Superstep orchestration, CheckpointingRuntime
 │   ├── vertex.rs       # Vertex trait and compute context
 │   ├── message.rs      # Inter-vertex message passing
 │   ├── config.rs       # PregelConfig, RetryPolicy
 │   ├── checkpoint/     # Fault tolerance via checkpointing
-│   │   ├── mod.rs      # Checkpointer trait and factory
-│   │   └── file.rs     # FileCheckpointer implementation
-│   └── state.rs        # WorkflowState trait, UnitState
+│   │   ├── mod.rs      # Checkpointer trait
+│   │   ├── file.rs     # FileCheckpointer
+│   │   ├── sqlite.rs   # SQLiteCheckpointer
+│   │   ├── redis.rs    # RedisCheckpointer
+│   │   └── postgres.rs # PostgresCheckpointer
+│   └── state.rs        # WorkflowState trait
 ├── workflow/           # Workflow Builder DSL
-│   ├── node.rs         # NodeKind (Agent, Tool, Router, SubAgent, FanOut/FanIn)
-│   └── mod.rs          # WorkflowGraph builder API
+│   ├── compiled.rs     # CompiledWorkflow with checkpoint support
+│   ├── graph.rs        # WorkflowGraph builder API
+│   └── vertices/       # Node implementations (Agent, Tool, Router, etc.)
+├── compat/             # Rig Framework Compatibility Layer
+│   ├── rig_agent_adapter.rs  # RigAgentAdapter (primary LLM integration)
+│   └── rig_tool_adapter.rs   # RigToolAdapter for Rig Tool compatibility
 ├── middleware/         # AgentMiddleware trait and MiddlewareStack
+│   └── summarization/  # Token counting and context summarization
 ├── backends/           # Backend trait (Memory, Filesystem, Composite)
-├── llm/                # LLMProvider abstraction (OpenAI, Anthropic)
-└── tools/              # Tool implementations (read_file, write_file, grep, etc.)
+├── llm/                # LLMProvider abstraction (uses RigAgentAdapter)
+└── tools/              # Tool implementations (read_file, write_file, etc.)
 ```
 
-### Pregel Execution Model
+### LLM Integration
 
-The runtime executes workflows using synchronized supersteps:
+**Use `RigAgentAdapter`** to wrap Rig's native providers (OpenAI, Anthropic, etc.):
+
+```rust
+use rig::providers::openai::Client;
+use rig_deepagents::{RigAgentAdapter, AgentExecutor};
+
+let client = Client::from_env();
+let agent = client.agent("gpt-4").build();
+let provider = RigAgentAdapter::new(agent);
+```
+
+Legacy `OpenAIProvider` and `AnthropicProvider` have been removed.
+
+### Pregel Execution Model
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -236,7 +220,7 @@ The runtime executes workflows using synchronized supersteps:
 
 - **Vertex**: Computation unit with `compute()` method (Agent, Tool, Router)
 - **Message**: Communication between vertices across supersteps
-- **Checkpointing**: Fault tolerance via periodic state snapshots
+- **Checkpointing**: Fault tolerance via periodic state snapshots (File, SQLite, Redis, Postgres)
 - **Retry Policy**: Exponential backoff with configurable max retries
 
 ### Key Types
@@ -244,15 +228,9 @@ The runtime executes workflows using synchronized supersteps:
 | Type | Purpose |
 |------|---------|
 | `PregelRuntime<S, M>` | Executes workflow graph with state S and message M |
-| `Vertex<S, M>` | Trait for computation nodes |
-| `WorkflowState` | Trait for workflow state (must be serializable) |
-| `PregelConfig` | Runtime configuration (max supersteps, parallelism, timeout) |
-| `Checkpointer` | Trait for state persistence (Memory, File, SQLite, Redis, Postgres) |
-
-### Design Documents
-
-- `docs/plans/2026-01-02-rig-deepagents-pregel-design.md` - Comprehensive Pregel runtime design
-- `docs/plans/2026-01-02-rig-deepagents-implementation-tasks.md` - Implementation task breakdown
+| `CheckpointingRuntime<S, M>` | PregelRuntime with checkpoint/resume support |
+| `RigAgentAdapter` | Wraps any Rig Agent for LLMProvider compatibility |
+| `CompiledWorkflow` | Builder result with optional checkpointing |
 
 ## Key Files for Understanding the System
 
@@ -261,18 +239,43 @@ The runtime executes workflows using synchronized supersteps:
 2. `research_agent/researcher/agent.py` - Autonomous researcher factory (CompiledSubAgent pattern)
 3. `research_agent/researcher/prompts.py` - Three-phase autonomous workflow
 4. `research_agent/prompts.py` - Orchestrator and Simple SubAgent prompts
-5. `research_agent/tools.py` - Tool implementations
-6. `research_agent/skills/middleware.py` - SkillsMiddleware with progressive disclosure
+
+**Context Engineering:**
+5. `context_engineering_research_agent/agent.py` - Context-aware agent factory
+6. `context_engineering_research_agent/context_strategies/` - 5 optimization strategies
 
 **Rust rig-deepagents:**
-7. `rust-research-agent/crates/rig-deepagents/src/pregel/runtime.rs` - Pregel execution engine
-8. `rust-research-agent/crates/rig-deepagents/src/pregel/vertex.rs` - Vertex abstraction
-9. `rust-research-agent/crates/rig-deepagents/src/workflow/node.rs` - Node type definitions
-10. `rust-research-agent/crates/rig-deepagents/src/llm/provider.rs` - LLMProvider trait
+7. `rust-research-agent/rig-deepagents/src/pregel/runtime.rs` - Pregel + Checkpointing
+8. `rust-research-agent/rig-deepagents/src/compat/rig_agent_adapter.rs` - LLM integration
+9. `rust-research-agent/rig-deepagents/src/workflow/compiled.rs` - Workflow compilation
 
-**Documentation:**
-11. `DeepAgents_Technical_Guide.md` - Python DeepAgents reference (Korean)
-12. `docs/plans/2026-01-02-rig-deepagents-pregel-design.md` - Rust Pregel design
+## Critical Patterns
+
+### SubAgent Creation
+
+Always use factory functions, never instantiate directly:
+```python
+# Correct
+researcher_subagent = get_researcher_subagent()
+
+# Wrong - bypasses middleware setup
+researcher = create_researcher_agent()
+```
+
+### File Path Routing
+
+Paths starting with "/" persist to `research_workspace/`, others are in-memory:
+```python
+write_file("/reports/summary.md", content)  # Persists
+write_file("temp/scratch.txt", content)     # Ephemeral
+```
+
+### Reflection Loop
+
+Always use `think_tool()` between web searches - explicit reflection is required:
+```
+Search → think_tool() → Decide → Search → think_tool() → Synthesize
+```
 
 ## Tech Stack
 
